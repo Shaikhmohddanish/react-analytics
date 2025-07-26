@@ -1,0 +1,120 @@
+// Client-side MongoDB interface that uses API routes
+// No direct MongoDB imports in this file to keep it client compatible
+
+/**
+ * Interface for CSV file info
+ */
+export interface CSVFileInfo {
+  fileName: string;
+  description?: string;
+  cloudinaryPublicId?: string | null;
+  cloudinaryUrl?: string | null;
+  recordCount?: number;
+}
+
+/**
+ * Interface for MongoDB response
+ */
+interface MongoDBResponse {
+  success: boolean;
+  data?: any;
+  error?: string;
+  insertedId?: string;
+}
+
+/**
+ * Store CSV file metadata in MongoDB via API
+ */
+export async function storeCSVFileInfo(fileInfo: CSVFileInfo): Promise<{insertedId: {toString: () => string}}> {
+  try {
+    const response = await fetch('/api/mongodb/store-csv-info', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(fileInfo),
+    });
+    
+    const result: MongoDBResponse = await response.json();
+    
+    if (!result.success || !result.insertedId) {
+      throw new Error(result.error || 'Failed to store CSV file info');
+    }
+    
+    // Return compatible structure with original function
+    return {
+      insertedId: {
+        toString: () => result.insertedId!
+      }
+    };
+  } catch (error) {
+    console.error('Error storing CSV file info:', error);
+    throw error;
+  }
+}
+
+/**
+ * Store delivery data in MongoDB via API
+ */
+export async function storeDeliveryData(data: any[], fileId: string): Promise<void> {
+  try {
+    const response = await fetch('/api/mongodb/store-delivery-data', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ data, fileId }),
+    });
+    
+    const result: MongoDBResponse = await response.json();
+    
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to store delivery data');
+    }
+  } catch (error) {
+    console.error('Error storing delivery data:', error);
+    throw error;
+  }
+}
+
+/**
+ * Get CSV file entries from MongoDB via API
+ */
+export async function getCSVFileEntries(): Promise<any[]> {
+  try {
+    const response = await fetch('/api/mongodb/get-csv-files');
+    const result: MongoDBResponse = await response.json();
+    
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to fetch CSV file entries');
+    }
+    
+    return result.data || [];
+  } catch (error) {
+    console.error('Error fetching CSV file entries:', error);
+    return [];
+  }
+}
+
+/**
+ * Get delivery data from MongoDB via API
+ */
+export async function getDeliveryData(fileId?: string): Promise<any[]> {
+  try {
+    const url = fileId 
+      ? `/api/mongodb/get-delivery-data?fileId=${encodeURIComponent(fileId)}`
+      : '/api/mongodb/get-delivery-data';
+      
+    const response = await fetch(url);
+    const result: MongoDBResponse = await response.json();
+    
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to fetch delivery data');
+    }
+    
+    return result.data || [];
+  } catch (error) {
+    console.error('Error fetching delivery data:', error);
+    return [];
+  }
+}

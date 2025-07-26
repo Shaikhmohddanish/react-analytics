@@ -1,0 +1,3 @@
+{
+  "serverComponentsExternalPackages": ["mongodb", "cloudinary"]
+}
