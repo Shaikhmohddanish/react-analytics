@@ -1,11 +1,13 @@
-"use server"
-
 import { MongoClient, ObjectId } from 'mongodb';
+
+// Check if we're in a Node.js runtime environment
+// This prevents MongoDB connections during build time
+const isServer = typeof window === 'undefined';
 
 // MongoDB Connection URI with credentials
 // For demo/development, we'll allow local mode with no MongoDB
-const MONGODB_ENABLED = process.env.MONGODB_ENABLED !== 'false';
-const uri = "mongodb+srv://skmohddanish:Asdfghjkl135@danish.3jczkjy.mongodb.net/?retryWrites=true&w=majority&appName=Danish";
+const MONGODB_ENABLED = isServer; // Always enable if we're on the server
+const uri = "mongodb+srv://skmohddanish:TPgWeHdpLskvfaOS@danish.z86w2ks.mongodb.net/";
 const client = MONGODB_ENABLED ? new MongoClient(uri, {
   connectTimeoutMS: 30000,
   socketTimeoutMS: 45000,
@@ -65,9 +67,9 @@ const localStorage = new LocalStorage();
 
 // Connect to MongoDB or use local storage
 async function connectToDatabase() {
-  // If MongoDB is disabled, use local storage
-  if (!MONGODB_ENABLED) {
-    console.log("MongoDB disabled. Using local storage mode for demo/development.");
+  // During build time or if not on server, use local storage
+  if (!isServer) {
+    console.log("Not on server. Using local storage mode.");
     return localStorage as any;
   }
   

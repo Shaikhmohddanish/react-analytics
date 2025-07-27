@@ -1,10 +1,8 @@
-"use server"
-
 import { v2 as cloudinary } from 'cloudinary';
 
-// Initialize Cloudinary with server environment variables
+// Initialize Cloudinary with hardcoded credentials
 cloudinary.config({
-  cloud_name: "dc6yx9za3",  // Updated to correct cloud name
+  cloud_name: "dc6yx9za3",
   api_key: "863685715778465",
   api_secret: "Q2v55Jp_lf2Bz1B6qUI2ppApNZA",
   secure: true,

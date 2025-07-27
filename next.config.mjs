@@ -2,7 +2,7 @@
 const nextConfig = {
   experimental: {
     optimizePackageImports: ['recharts'],
-    serverComponentsExternalPackages: ['cloudinary'], // Add cloudinary to external packages
+    serverComponentsExternalPackages: ['cloudinary', 'mongodb'], // Add mongodb to external packages
   },
   eslint: {
     ignoreDuringBuilds: true,

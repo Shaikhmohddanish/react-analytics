@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDeliveryDataServer } from '@/lib/mongodb-server';
 
+// Ensure this route is only executed at runtime, not during build
+export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';
+
 export async function GET(request: NextRequest) {
   try {
     const fileId = request.nextUrl.searchParams.get('fileId') || undefined;
