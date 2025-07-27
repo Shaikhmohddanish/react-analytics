@@ -5,7 +5,7 @@ import { MongoClient, ObjectId } from 'mongodb';
 // MongoDB Connection URI with credentials
 // For demo/development, we'll allow local mode with no MongoDB
 const MONGODB_ENABLED = process.env.MONGODB_ENABLED !== 'false';
-const uri = "mongodb+srv://skmohddanish:UPcZkKtKVLoGf312@cluster0.3jczkjy.mongodb.net/?retryWrites=true&w=majority";
+const uri = "mongodb+srv://skmohddanish:Asdfghjkl135@danish.3jczkjy.mongodb.net/?retryWrites=true&w=majority&appName=Danish";
 const client = MONGODB_ENABLED ? new MongoClient(uri, {
   connectTimeoutMS: 30000,
   socketTimeoutMS: 45000,
