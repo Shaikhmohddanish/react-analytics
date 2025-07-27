@@ -13,7 +13,7 @@ export async function storeFileUploadHistory(fileData: {
   cloudinaryUrl?: string | null;
   recordCount?: number;
   description?: string;
-}) {
+}): Promise<{ success: boolean, fileId?: string, error?: string }> {
   try {
     const response = await fetch('/api/mongodb/store-file-history', {
       method: 'POST',

@@ -1,0 +1,13 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Test MongoDB Connection",
+			"type": "shell",
+			"command": "curl http://localhost:3000/api/mongodb/test-connection",
+			"group": "test",
+			"isBackground": false,
+			"problemMatcher": []
+		}
+	]
+}

@@ -56,7 +56,7 @@ export async function storeCSVFileInfo(fileInfo: CSVFileInfo): Promise<{inserted
 /**
  * Store delivery data in MongoDB via API
  */
-export async function storeDeliveryData(data: any[], fileId: string): Promise<void> {
+export async function storeDeliveryData(data: any[], fileId: string): Promise<{ success: boolean, error?: string }> {
   try {
     const response = await fetch('/api/mongodb/store-delivery-data', {
       method: 'POST',
@@ -69,11 +69,21 @@ export async function storeDeliveryData(data: any[], fileId: string): Promise<vo
     const result: MongoDBResponse = await response.json();
     
     if (!result.success) {
-      throw new Error(result.error || 'Failed to store delivery data');
+      return {
+        success: false,
+        error: result.error || 'Failed to store delivery data'
+      };
     }
+    
+    return {
+      success: true
+    };
   } catch (error) {
     console.error('Error storing delivery data:', error);
-    throw error;
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error storing delivery data'
+    };
   }
 }
 

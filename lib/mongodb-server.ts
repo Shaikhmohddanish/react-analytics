@@ -19,6 +19,36 @@ const csvFilesCollection = "csv_files";
 const dataCollection = "delivery_data";
 const fileHistoryCollection = "file_upload_history";
 
+// Ensure all required collections exist
+async function ensureCollectionsExist(db: any) {
+  try {
+    console.log("Ensuring collections exist...");
+    const collections = await db.listCollections().toArray();
+    const collectionNames = collections.map((c: any) => c.name);
+    
+    // Create collections if they don't exist
+    if (!collectionNames.includes(csvFilesCollection)) {
+      console.log(`Creating collection: ${csvFilesCollection}`);
+      await db.createCollection(csvFilesCollection);
+    }
+    
+    if (!collectionNames.includes(dataCollection)) {
+      console.log(`Creating collection: ${dataCollection}`);
+      await db.createCollection(dataCollection);
+    }
+    
+    if (!collectionNames.includes(fileHistoryCollection)) {
+      console.log(`Creating collection: ${fileHistoryCollection}`);
+      await db.createCollection(fileHistoryCollection);
+    }
+    
+    console.log("All collections verified.");
+  } catch (error) {
+    console.error("Error ensuring collections exist:", error);
+    // Continue despite errors - MongoDB will create collections on first insert anyway
+  }
+}
+
 // A local storage solution for when MongoDB is not available
 // This is for demo/development purposes only
 class LocalStorage {
@@ -83,7 +113,14 @@ async function connectToDatabase() {
         if (!client) throw new Error("MongoDB client is null");
         await client.connect();
         console.log("Successfully connected to MongoDB");
-        return client.db(dbName);
+        
+        // Get database reference
+        const db = client.db(dbName);
+        
+        // Ensure collections exist
+        await ensureCollectionsExist(db);
+        
+        return db;
       } catch (err: any) {
         lastError = err instanceof Error ? err : new Error(String(err));
         console.warn(`Connection attempt failed (${retries} retries left):`, lastError.message);
@@ -116,22 +153,44 @@ export async function storeCSVFileInfoServer(fileInfo: {
 }) {
   try {
     const db = await connectToDatabase();
+    // Check if we're using local storage fallback
+    if (db === localStorage) {
+      console.log("Using local storage for CSV file info storage");
+    }
+    
     const collection = db.collection(csvFilesCollection);
+    console.log(`Inserting into ${csvFilesCollection}:`, fileInfo.fileName);
     
     const result = await collection.insertOne({
       ...fileInfo,
       importDate: new Date()
     });
     
+    console.log("CSV file info stored successfully with ID:", result.insertedId.toString());
     return {
       success: true,
       insertedId: result.insertedId.toString()
     };
   } catch (error) {
     console.error("Error storing CSV file info:", error);
+    // More detailed error handling
+    let errorMessage = "Unknown database error";
+    if (error instanceof Error) {
+      errorMessage = error.message;
+      
+      // Add more context if possible
+      if (errorMessage.includes("not connected")) {
+        errorMessage = "Database connection failed. Please check your MongoDB connection string and network.";
+      } else if (errorMessage.includes("authorization") || errorMessage.includes("authentication")) {
+        errorMessage = "Database authentication failed. Please check your MongoDB credentials.";
+      } else if (errorMessage.includes("duplicate key")) {
+        errorMessage = "A file with this information already exists in the database.";
+      }
+    }
+    
     return {
       success: false,
-      error: error instanceof Error ? error.message : String(error)
+      error: errorMessage
     };
   }
 }
@@ -139,17 +198,43 @@ export async function storeCSVFileInfoServer(fileInfo: {
 // Store delivery data in MongoDB
 export async function storeDeliveryDataServer(data: any[], fileId: string) {
   try {
+    if (!data || data.length === 0) {
+      throw new Error("No data to store");
+    }
+    
+    if (!fileId) {
+      throw new Error("File ID is required");
+    }
+    
+    console.log(`Storing ${data.length} delivery records for file ID: ${fileId}`);
     const db = await connectToDatabase();
+    
+    // Check if we're using local storage fallback
+    if (db === localStorage) {
+      console.log("Using local storage for delivery data storage");
+    }
+    
     const collection = db.collection(dataCollection);
     
     // Add file reference to each record
-    const dataWithFileId = data.map(item => ({
-      ...item,
-      fileId: new ObjectId(fileId)
-    }));
+    let dataWithFileId;
+    try {
+      dataWithFileId = data.map(item => ({
+        ...item,
+        fileId: new ObjectId(fileId)
+      }));
+    } catch (error) {
+      console.error("Error creating ObjectId:", error);
+      // Fallback if ObjectId creation fails
+      dataWithFileId = data.map(item => ({
+        ...item,
+        fileId: fileId
+      }));
+    }
     
     // Insert all records
     const result = await collection.insertMany(dataWithFileId);
+    console.log(`Successfully inserted ${result.insertedCount} records`);
     
     return {
       success: true,
@@ -157,9 +242,25 @@ export async function storeDeliveryDataServer(data: any[], fileId: string) {
     };
   } catch (error) {
     console.error("Error storing delivery data:", error);
+    
+    // More detailed error handling
+    let errorMessage = "Unknown database error";
+    if (error instanceof Error) {
+      errorMessage = error.message;
+      
+      // Add more context if possible
+      if (errorMessage.includes("not connected")) {
+        errorMessage = "Database connection failed. Please check your MongoDB connection string and network.";
+      } else if (errorMessage.includes("authorization") || errorMessage.includes("authentication")) {
+        errorMessage = "Database authentication failed. Please check your MongoDB credentials.";
+      } else if (errorMessage.includes("document too large")) {
+        errorMessage = "Some data records are too large. Try splitting the data into smaller chunks.";
+      }
+    }
+    
     return {
       success: false,
-      error: error instanceof Error ? error.message : String(error)
+      error: errorMessage
     };
   }
 }
@@ -191,10 +292,38 @@ export async function testMongoDBConnection() {
     const db = await connectToDatabase();
     // Try a simple command to verify connection
     const result = await db.command({ ping: 1 });
+    
+    // Check collections
+    const collections = [csvFilesCollection, dataCollection, fileHistoryCollection];
+    const collectionList = await db.listCollections().toArray();
+    const collectionNames = collectionList.map((c: any) => c.name);
+    
+    const missingCollections = collections.filter(c => !collectionNames.includes(c));
+    
+    // Create missing collections
+    for (const collection of missingCollections) {
+      try {
+        console.log(`Creating missing collection: ${collection}`);
+        await db.createCollection(collection);
+      } catch (err) {
+        console.error(`Failed to create collection ${collection}:`, err);
+      }
+    }
+    
+    // Check collections again
+    const updatedCollectionList = await db.listCollections().toArray();
+    const updatedCollectionNames = updatedCollectionList.map((c: any) => c.name);
+    
     return {
       success: true,
       message: "MongoDB connection successful",
-      details: result
+      details: result,
+      collections: {
+        required: collections,
+        existing: updatedCollectionNames,
+        missing: collections.filter(c => !updatedCollectionNames.includes(c)),
+        created: missingCollections.filter(c => updatedCollectionNames.includes(c))
+      }
     };
   } catch (error) {
     console.error("MongoDB connection test failed:", error);
