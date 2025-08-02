@@ -113,32 +113,27 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
   }
 
   const validateColumns = (columns: string[]) => {
-    // Log available columns for debugging
-    console.log("Validating columns:", columns);
+    const requiredColumns = [
+      "Delivery Challan ID",
+      "Challan Date",
+      "Delivery Challan Number",
+      "Customer Name",
+      "Item Name",
+      "Item Total",
+    ];
     
-    const errors: string[] = []
+    // Make column validation more flexible
+    const missingColumns = requiredColumns.filter((col) => !columns.some((column) => column.toLowerCase().includes(col.toLowerCase())));
     
-    // Check for required fields using more flexible approach
-    const hasDate = columns.some(col => col.includes("Date") || col.includes("date"));
-    const hasItem = columns.some(col => col.includes("Item") || col.includes("Product") || col.includes("Description"));
-    const hasTotal = columns.some(col => col.includes("Total") || col.includes("Amount") || col.includes("Price"));
-    const hasCustomer = columns.some(col => col.includes("Customer") || col.includes("Client"));
-    
-    if (!hasDate) errors.push("Missing date column");
-    if (!hasItem) errors.push("Missing item/product column");
-    if (!hasTotal) errors.push("Missing total/amount column");
-    if (!hasCustomer) errors.push("Missing customer/client column");
-    
-    // If more than 2 required types are missing, show warning
-    if (errors.length > 2) {
-      errors.push("This CSV file might not be in the expected format.");
+    if (missingColumns.length > 0) {
+      setValidationErrors(missingColumns.map(col => `Missing column: ${col}`));
     } else {
-      // Clear errors if we have most of the needed fields - we'll try to process it anyway
-      errors.length = 0;
+      setValidationErrors([]);  // Clear validation errors if columns are valid
     }
-
-    setValidationErrors(errors)
   }
+  
+  // Updated previewFile to force parsing all lines including empty ones and log raw data
+  // Remove duplicate previewFile function
   
   // Load Cloudinary files when dialog opens
   useEffect(() => {
@@ -197,79 +192,107 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
       setImporting(true);
       setProgress(10);
 
-      // Download the CSV from Cloudinary
-      const csvContent = await downloadCSVFromCloudinary(publicId);
+      // Download the CSV from Cloudinary as text
+      const response = await fetch(`https://res.cloudinary.com/${process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME}/raw/upload/${publicId}`);
+      if (!response.ok) {
+        throw new Error(`Failed to download file: ${response.statusText}`);
+      }
+      const csvContent = await response.text();
       setProgress(50);
 
+      // Fix: Remove BOM if present to avoid parsing issues
+      const csvContentClean = csvContent.charCodeAt(0) === 0xFEFF ? csvContent.slice(1) : csvContent;
+
       // Parse the CSV content
-      Papa.parse(csvContent, {
+      console.log("Raw CSV Content:", csvContent.slice(0, 500));
+      console.log("Clean CSV content snippet:", csvContentClean.slice(0, 200));
+      Papa.parse(csvContentClean, {
         header: true,
         skipEmptyLines: true,
+        delimiter: ",",  // Force delimiter to comma
+        dynamicTyping: true,
         transformHeader: (header: string) => header.trim(),
-        complete: (results: Papa.ParseResult<any>) => {
+        complete: async (results: Papa.ParseResult<any>) => {
           if (results.errors.length > 0) {
             console.warn("CSV parsing warnings:", results.errors);
+          }
+          
+          // Log raw data for debugging
+          console.log("Raw CSV data:", results.data.slice(0, 5));
+          console.log("CSV fields:", results.meta.fields);
+          if (!results.meta.fields) {
+            console.error("Failed to detect headers in cloud CSV. Check file format.");
+          }
+          
+          if (results.data.length === 0) {
+            toast({
+              title: "Invalid Data",
+              description: "No valid data was found in the CSV file.",
+              variant: "destructive",
+            });
+            setImporting(false);
+            return;
           }
           
           // Process the data and complete the import
           const processedData = processParseResults(results);
           setProgress(80);
           
-          setTimeout(async () => {
-            try {
-              // Store CSV file metadata in MongoDB
-              const fileName = publicId.split('/').pop() || "cloud-import";
-              // Ensure filename ends with .csv
-              const fileNameWithExt = fileName.toLowerCase().endsWith('.csv') ? fileName : `${fileName}.csv`;
-              
-              const fileInfo = await storeCSVFileInfo({
-                fileName: fileNameWithExt,
-                description: `Imported from Cloudinary on ${new Date().toLocaleDateString()}`,
-                cloudinaryPublicId: publicId,
-                cloudinaryUrl: publicId,
-                recordCount: processedData.length
-              });
-              
-              // Store the processed data in MongoDB
-              const deliveryDataResult = await storeDeliveryData(processedData, fileInfo.insertedId.toString());
-              if (!deliveryDataResult.success) {
-                console.warn("Warning: MongoDB data storage had issues:", deliveryDataResult.error);
-              }
-              
-              // Store file upload history with metadata
-              const fileHistoryResult = await storeFileUploadHistory({
-                fileName: publicId.split('/').pop() || "cloud-import",
-                fileSize: csvContent.length, // Use content length as file size
-                cloudinaryPublicId: publicId,
-                cloudinaryUrl: publicId,
-                recordCount: processedData.length,
-                description: `Imported from Cloudinary on ${new Date().toLocaleDateString()}`
-              });
-              
-              if (!fileHistoryResult.success) {
-                console.warn("Warning: File history storage had issues:", fileHistoryResult.error);
-              }
-              
-              setProgress(100);
-              onImportComplete(processedData, importMode);
-              toast({
-                title: "Import successful",
-                description: `Imported ${processedData.length.toLocaleString()} records from cloud storage`,
-              });
-              resetDialog();
-            } catch (mongoError) {
-              console.error("MongoDB storage error:", mongoError);
-              toast({
-                title: "Database Storage Warning",
-                description: "Data imported successfully but there was an issue saving to the database.",
-                variant: "destructive",
-              });
-              
-              // Still complete the import even if MongoDB storage fails
-              onImportComplete(processedData, importMode);
-              resetDialog();
+          try {
+            // Store CSV file metadata in MongoDB
+            const fileName = publicId.split('/').pop() || "cloud-import";
+            // Ensure filename ends with .csv
+            const fileNameWithExt = fileName.toLowerCase().endsWith('.csv') ? fileName : `${fileName}.csv`;
+            
+            const fileInfo = await storeCSVFileInfo({
+              fileName: fileNameWithExt,
+              description: `Imported from Cloudinary on ${new Date().toLocaleDateString()}`,
+              cloudinaryPublicId: publicId,
+              cloudinaryUrl: publicId,
+              recordCount: processedData.length
+            });
+            
+            // Store the processed data in MongoDB
+            console.log("Storing delivery data in MongoDB, data length:", processedData.length);
+            const deliveryDataResult = await storeDeliveryData(processedData, fileInfo.insertedId.toString());
+            console.log("MongoDB store delivery data result:", deliveryDataResult);
+            if (!deliveryDataResult.success) {
+              console.warn("Warning: MongoDB data storage had issues:", deliveryDataResult.error);
             }
-          }, 500);
+            
+            // Store file upload history with metadata
+            const fileHistoryResult = await storeFileUploadHistory({
+              fileName: publicId.split('/').pop() || "cloud-import",
+              fileSize: csvContent.length, // Use content length as file size
+              cloudinaryPublicId: publicId,
+              cloudinaryUrl: publicId,
+              recordCount: processedData.length,
+              description: `Imported from Cloudinary on ${new Date().toLocaleDateString()}`
+            });
+            
+            if (!fileHistoryResult.success) {
+              console.warn("Warning: File history storage had issues:", fileHistoryResult.error);
+            }
+            
+            setProgress(100);
+            onImportComplete(processedData, importMode);
+            toast({
+              title: "Import successful",
+              description: `Imported ${processedData.length.toLocaleString()} records from cloud storage`,
+            });
+            resetDialog();
+          } catch (mongoError) {
+            console.error("MongoDB storage error:", mongoError);
+            toast({
+              title: "Database Storage Warning",
+              description: "Data imported successfully but there was an issue saving to the database.",
+              variant: "destructive",
+            });
+            
+            // Still complete the import even if MongoDB storage fails
+            onImportComplete(processedData, importMode);
+            resetDialog();
+          }
         },
         error: (error: Error) => {
           console.error("CSV parsing error:", error);
@@ -304,7 +327,7 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
     
     console.log("Non-empty rows:", nonEmptyRows.length);
     
-    return nonEmptyRows
+  return nonEmptyRows
       .filter((row: any) => {
         // More flexible check - check if the row has any data
         if (!row || Object.keys(row).length === 0) {
@@ -332,7 +355,7 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
                                  (hasAnyItemField && hasAnyTotalField);
           
         if (!hasRequiredFields) {
-          console.log("Filtering out row due to missing fields:", row);
+          console.log("Filtering out row due to missing fields; keys present:", Object.keys(row), "Row content:", row);
         }
         
         return hasRequiredFields;
@@ -505,6 +528,8 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
           console.log("Proceeding with local import despite cloud upload failure");
         }
       }
+
+      console.log("Continue with local parsing");
       
       // Continue with local parsing
       Papa.parse(file, {

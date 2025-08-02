@@ -1,8 +1,7 @@
 // Cloudinary configuration for storing CSV files - Browser-compatible version
 // This file uses Fetch API instead of the Node.js Cloudinary SDK
 
-const CLOUD_NAME = "dc6yx9za3";  // Updated to correct cloud name
-const API_KEY = "863685715778465";
+const CLOUD_NAME = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME || "dc6yx9za3";
 // API_SECRET should only be used server-side, not in browser code
 
 // Define interface for Cloudinary response

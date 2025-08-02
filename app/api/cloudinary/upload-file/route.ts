@@ -2,8 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { v2 as cloudinary } from 'cloudinary';
 import { Readable } from 'stream';
 
-// Make sure Cloudinary is configured - if not using cloudinary-server.ts
-// Cloudinary is already configured in cloudinary-server.ts
+// Configure Cloudinary with environment variables
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+  secure: true,
+});
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';

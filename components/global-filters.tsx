@@ -158,8 +158,8 @@ export function GlobalFilters({ open, onOpenChange }: GlobalFiltersProps) {
           <div className="space-y-2">
             <Label className="text-sm font-medium">Categories</Label>
             <div className="max-h-32 sm:max-h-48 overflow-y-auto space-y-2 border rounded-md p-3">
-              {categories.map((category) => (
-                <div key={category} className="flex items-center space-x-2">
+              {categories.map((category, index) => (
+                <div key={`${category}-${index}`} className="flex items-center space-x-2">
                   <Checkbox
                     id={`category-${category}`}
                     checked={tempFilters.categories.includes(category)}
@@ -189,8 +189,8 @@ export function GlobalFilters({ open, onOpenChange }: GlobalFiltersProps) {
           <div className="space-y-2">
             <Label className="text-sm font-medium">Customers</Label>
             <div className="max-h-32 sm:max-h-48 overflow-y-auto space-y-2 border rounded-md p-3">
-              {customers.slice(0, 20).map((customer) => (
-                <div key={customer} className="flex items-center space-x-2">
+              {customers.slice(0, 20).map((customer, index) => (
+                <div key={`${customer}-${index}`} className="flex items-center space-x-2">
                   <Checkbox
                     id={`customer-${customer}`}
                     checked={tempFilters.customers.includes(customer)}
@@ -252,8 +252,8 @@ export function GlobalFilters({ open, onOpenChange }: GlobalFiltersProps) {
                 />
               </Badge>
             )}
-            {tempFilters.categories.map((category) => (
-              <Badge key={category} variant="secondary" className="text-xs">
+            {tempFilters.categories.map((category, index) => (
+              <Badge key={`${category}-${index}`} variant="secondary" className="text-xs">
                 {category.length > 15 ? category.substring(0, 12) + "..." : category}
                 <X
                   className="ml-1 h-3 w-3 cursor-pointer"
@@ -266,8 +266,8 @@ export function GlobalFilters({ open, onOpenChange }: GlobalFiltersProps) {
                 />
               </Badge>
             ))}
-            {tempFilters.customers.map((customer) => (
-              <Badge key={customer} variant="secondary" className="text-xs">
+            {tempFilters.customers.map((customer, index) => (
+              <Badge key={`${customer}-${index}`} variant="secondary" className="text-xs">
                 {customer.length > 20 ? customer.substring(0, 17) + "..." : customer}
                 <X
                   className="ml-1 h-3 w-3 cursor-pointer"

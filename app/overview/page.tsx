@@ -31,7 +31,7 @@ export default function OverviewPage() {
     // Monthly trend analysis
     const monthlyData = filteredData.reduce(
       (acc, item) => {
-        const key = `${item.year}-${item.monthNum.toString().padStart(2, "0")}`
+        const key = `${item.year}-${(item.monthNum ? item.monthNum.toString().padStart(2, "0") : "00")}`
         if (!acc[key]) {
           acc[key] = { month: item.month, year: item.year, sales: 0, orders: 0, customers: new Set() }
         }

@@ -4,10 +4,9 @@ import { MongoClient, ObjectId } from 'mongodb';
 // This prevents MongoDB connections during build time
 const isServer = typeof window === 'undefined';
 
-// MongoDB Connection URI with credentials
-// For demo/development, we'll allow local mode with no MongoDB
-const MONGODB_ENABLED = isServer; // Always enable if we're on the server
-const uri = "mongodb+srv://skmohddanish:TPgWeHdpLskvfaOS@danish.z86w2ks.mongodb.net/";
+// MongoDB Connection URI with credentials from environment variables
+const MONGODB_ENABLED = isServer && process.env.MONGODB_URI; // Enable if we're on server and have URI
+const uri = process.env.MONGODB_URI || "";
 const client = MONGODB_ENABLED ? new MongoClient(uri, {
   connectTimeoutMS: 30000,
   socketTimeoutMS: 45000,
@@ -219,10 +218,13 @@ export async function storeDeliveryDataServer(data: any[], fileId: string) {
     // Add file reference to each record
     let dataWithFileId;
     try {
-      dataWithFileId = data.map(item => ({
-        ...item,
-        fileId: new ObjectId(fileId)
-      }));
+      dataWithFileId = data.map(item => {
+        console.log("Preparing item for insertion:", item);
+        return {
+          ...item,
+          fileId: new ObjectId(fileId)
+        };
+      });
     } catch (error) {
       console.error("Error creating ObjectId:", error);
       // Fallback if ObjectId creation fails

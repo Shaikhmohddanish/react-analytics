@@ -1,10 +1,10 @@
 import { v2 as cloudinary } from 'cloudinary';
 
-// Initialize Cloudinary with hardcoded credentials
+// Initialize Cloudinary with environment variables
 cloudinary.config({
-  cloud_name: "dc6yx9za3",
-  api_key: "863685715778465",
-  api_secret: "Q2v55Jp_lf2Bz1B6qUI2ppApNZA",
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
   secure: true,
 });
 
