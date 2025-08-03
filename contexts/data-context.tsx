@@ -30,11 +30,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const { toast } = useToast()
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (forceRefresh = false) => {
     try {
       setLoading(true)
       setError(null)
-      const processedData = await loadAndProcessData()
+      const processedData = await loadAndProcessData(forceRefresh)
       setData(processedData)
       setLastUpdated(new Date())
 
@@ -56,7 +56,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   }, [toast])
 
   const refreshData = useCallback(async () => {
-    await loadData()
+    // Pass true to force refresh and bypass cache
+    await loadData(true)
   }, [loadData])
 
   const importData = useCallback(

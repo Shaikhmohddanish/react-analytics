@@ -1,16 +1,11 @@
 // Client-side MongoDB interface that uses API routes
 // No direct MongoDB imports in this file to keep it client compatible
+import { DeliveryData, ProcessedData, CSVFileInfo as CSVFileInfoModel, FileUploadHistory } from '@/models';
 
 /**
- * Interface for CSV file info
+ * Interface for CSV file info (keeping for backward compatibility)
  */
-export interface CSVFileInfo {
-  fileName: string;
-  description?: string;
-  cloudinaryPublicId?: string | null;
-  cloudinaryUrl?: string | null;
-  recordCount?: number;
-}
+export type CSVFileInfo = CSVFileInfoModel;
 
 /**
  * Interface for MongoDB response
@@ -109,7 +104,7 @@ export async function getCSVFileEntries(): Promise<any[]> {
 /**
  * Get delivery data from MongoDB via API
  */
-export async function getDeliveryData(fileId?: string): Promise<any[]> {
+export async function getDeliveryData(fileId?: string): Promise<DeliveryData[]> {
   try {
     const url = fileId 
       ? `/api/mongodb/get-delivery-data?fileId=${encodeURIComponent(fileId)}`
@@ -122,7 +117,16 @@ export async function getDeliveryData(fileId?: string): Promise<any[]> {
       throw new Error(result.error || 'Failed to fetch delivery data');
     }
     
-    return result.data || [];
+    // Ensure the data is properly typed
+    if (Array.isArray(result.data)) {
+      return result.data.filter(item => 
+        // Basic validation to ensure only valid data is returned
+        item && 
+        (item.deliveryChallanId || item["Delivery Challan ID"])
+      );
+    }
+    
+    return [];
   } catch (error) {
     console.error('Error fetching delivery data:', error);
     return [];

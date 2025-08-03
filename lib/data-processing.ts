@@ -1,32 +1,31 @@
 import Papa from "papaparse"
 import { getDeliveryData } from "@/lib/mongodb-client"
+import { getCloudinaryCSVFiles, downloadCSVFromCloudinary } from "./cloudinary"
+import { ProcessedData, DeliveryData as DeliveryDataModel, convertToProcessedData } from "@/models"
 
-export interface DeliveryData {
-  "Delivery Challan ID": string
-  "Challan Date": string
-  "Delivery Challan Number": string
-  "Customer Name": string
-  "Item Name": string
-  "Item Total": string
-  [key: string]: string
-}
+// Import types for backward compatibility
+export type { ProcessedData } from "@/models";
+export type DeliveryData = {
+  "Delivery Challan ID": string;
+  "Challan Date": string;
+  "Delivery Challan Number": string;
+  "Customer Name": string;
+  "Item Name": string;
+  "Item Total": string;
+  [key: string]: string;
+};
 
-export interface ProcessedData {
-  "Delivery Challan ID": string
-  "Challan Date": string
-  "Delivery Challan Number": string
-  "Customer Name": string
-  "Item Name": string
-  "Item Total": string
-  [key: string]: string | Date | number
-  challanDate: Date
-  itemNameCleaned: string
-  category: string
-  month: string
-  year: number
-  monthNum: number
-  itemTotal: number
-}
+// Cache for MongoDB data to prevent redundant API calls
+let dataCache: {
+  data: ProcessedData[];
+  timestamp: number;
+} = {
+  data: [],
+  timestamp: 0
+};
+
+// Cache expiry time in milliseconds (5 minutes)
+const CACHE_EXPIRY_TIME = 5 * 60 * 1000;
 
 const categoryMap: Record<string, string[]> = {
   "Bio-Fertilizers": [
@@ -134,25 +133,32 @@ const categoryMap: Record<string, string[]> = {
     "rainbow",
     "zumbaa",
     "turma",
-    "simba",
-    "captain",
-    "ferrari",
-    "fountain",
   ],
-  "Other Bulk Orders": ["biomass briquette", "nandi choona", "calcimag", "biomass", "nandi", "calcimag"],
 }
 
-const reverseMap: Record<string, string> = {}
-Object.entries(categoryMap).forEach(([category, items]) => {
-  items.forEach((item) => {
-    reverseMap[item.toLowerCase()] = category
-  })
-})
-
-import { getCloudinaryCSVFiles, downloadCSVFromCloudinary } from "./cloudinary"
-
-export async function loadAndProcessData(): Promise<ProcessedData[]> {
+/**
+ * Load and process delivery data from various sources
+ * 
+ * Data sources are tried in this order:
+ * 1. Cache (if not expired and not forcing refresh)
+ * 2. MongoDB
+ * 3. Cloudinary CSV file
+ * 4. Local CSV file
+ * 
+ * @param forceRefresh Whether to bypass cache and force a refresh
+ * @returns Processed delivery data
+ */
+export async function loadAndProcessData(forceRefresh = false): Promise<ProcessedData[]> {
   try {
+    // Check cache first if not forcing refresh
+    const currentTime = Date.now();
+    if (!forceRefresh && 
+        dataCache.data.length > 0 && 
+        currentTime - dataCache.timestamp < CACHE_EXPIRY_TIME) {
+      console.log(`Using cached data (${dataCache.data.length} records)`);
+      return dataCache.data;
+    }
+    
     // First try to load data from MongoDB
     try {
       console.log("Attempting to load data from MongoDB");
@@ -160,7 +166,90 @@ export async function loadAndProcessData(): Promise<ProcessedData[]> {
       
       if (mongoData && mongoData.length > 0) {
         console.log(`Loaded ${mongoData.length} records from MongoDB`);
-        return mongoData as unknown as ProcessedData[];
+        
+        // Process the MongoDB data to ensure it matches our schema
+        const processedData = mongoData.map((item: any): ProcessedData => {
+          // Handle different data structures that might come from MongoDB
+          // First try to interpret it as our normalized DeliveryDataModel
+          if (item.deliveryChallanId !== undefined && 
+              item.challanDate !== undefined && 
+              item.deliveryChallanNumber !== undefined) {
+            // Ensure challanDateObj is a proper Date
+            let challanDateObj: Date;
+            if (item.challanDateObj instanceof Date) {
+              challanDateObj = item.challanDateObj;
+            } else if (item.challanDateObj) {
+              challanDateObj = new Date(item.challanDateObj);
+            } else {
+              challanDateObj = new Date(); // Default fallback
+            }
+            
+            return {
+              "Delivery Challan ID": item.deliveryChallanId || "",
+              "Challan Date": item.challanDate || "",
+              "Delivery Challan Number": item.deliveryChallanNumber || "",
+              "Customer Name": item.customerName || "",
+              "Item Name": item.itemName || "",
+              "Item Total": item.itemTotalRaw || "0",
+              challanDate: challanDateObj,
+              itemNameCleaned: item.itemNameCleaned || "",
+              category: item.category || "Other",
+              month: item.month || "",
+              year: item.year || 0,
+              monthNum: item.monthNum || 0,
+              itemTotal: item.itemTotal || 0
+            };
+          }
+          
+          // Otherwise, try to interpret it using the raw field names
+          // Create a proper Date object for challanDate
+          let challanDateObj: Date = new Date();
+          
+          // Try to parse date from item
+          try {
+            if (item.challanDate) {
+              const parsed = new Date(item.challanDate);
+              if (!isNaN(parsed.getTime())) {
+                challanDateObj = parsed;
+              }
+            } else if (item["Challan Date"]) {
+              const parsed = new Date(item["Challan Date"]);
+              if (!isNaN(parsed.getTime())) {
+                challanDateObj = parsed;
+              }
+            }
+          } catch (e) {
+            console.error("Error parsing date:", e);
+          }
+          
+          return {
+            "Delivery Challan ID": String(item.deliveryChallanId || item["Delivery Challan ID"] || ""),
+            "Challan Date": String(item.challanDate || item["Challan Date"] || ""),
+            "Delivery Challan Number": String(item.deliveryChallanNumber || item["Delivery Challan Number"] || ""),
+            "Customer Name": String(item.customerName || item["Customer Name"] || ""),
+            "Item Name": String(item.itemName || item["Item Name"] || ""),
+            "Item Total": String(item.itemTotalRaw || item["Item Total"] || "0"),
+            challanDate: challanDateObj,
+            itemNameCleaned: String(item.itemName || item["Item Name"] || "").toLowerCase().trim(),
+            category: String(item.category || "Other"),
+            month: String(item.month || ""),
+            year: Number(item.year || 0),
+            monthNum: Number(item.monthNum || 0),
+            itemTotal: typeof item.itemTotal === 'number' ? item.itemTotal : 0
+          };
+        });
+        
+        // Validate the processed data
+        const validData = validateProcessedData(processedData);
+        console.log(`Validated ${validData.length} records out of ${processedData.length}`);
+        
+        // Update cache with processed data
+        dataCache = {
+          data: validData,
+          timestamp: currentTime
+        };
+        
+        return dataCache.data;
       }
       
       console.log("No data found in MongoDB, falling back to CSV import");
@@ -179,133 +268,236 @@ export async function loadAndProcessData(): Promise<ProcessedData[]> {
           new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
         )[0];
         
-        console.log("Loading CSV from Cloudinary:", latestFile.public_id);
+        console.log("Found CSV file in Cloudinary:", latestFile.public_id);
         csvText = await downloadCSVFromCloudinary(latestFile.public_id);
+      } else {
+        console.log("No CSV files found in Cloudinary, trying local file");
       }
     } catch (cloudError) {
-      console.warn("Failed to load from Cloudinary, falling back to local file:", cloudError);
+      console.warn("Failed to load from Cloudinary, falling back to local CSV file:", cloudError);
     }
     
-    // If both MongoDB and Cloudinary failed, use local fallback
+    // If no data from Cloudinary, try local file
     if (!csvText) {
-      const response = await fetch("/data/delivery_challan.csv");
-      if (!response.ok) {
-        throw new Error(`Failed to fetch CSV: ${response.status} ${response.statusText}`);
+      try {
+        // Local file fallback
+        const response = await fetch("/data/delivery_challan.csv");
+        if (!response.ok) {
+          throw new Error(`Failed to fetch CSV: ${response.statusText}`);
+        }
+        csvText = await response.text();
+        console.log("Loaded local CSV file");
+      } catch (csvError) {
+        console.error("Failed to load local CSV file:", csvError);
+        throw new Error("No data could be loaded from any source");
       }
-      csvText = await response.text();
+    }
+    
+    // Parse CSV data
+    const parsed = Papa.parse(csvText, { 
+      header: true,
+      skipEmptyLines: true,
+      dynamicTyping: false
+    });
+    
+    if (!parsed.data || parsed.data.length === 0) {
+      throw new Error("CSV file contains no data or is invalid");
     }
 
-    return new Promise((resolve, reject) => {
-      Papa.parse<DeliveryData>(csvText, {
-        header: true,
-        skipEmptyLines: true,
-        transformHeader: (header) => header.trim(),
-        complete: (results) => {
-          try {
-            if (results.errors.length > 0) {
-              console.warn("CSV parsing warnings:", results.errors)
+    // Process the data
+    const processedData = (parsed.data as Record<string, unknown>[])
+      .filter((row: Record<string, unknown>) => 
+        // Filter out empty rows or rows without required fields
+        row && 
+        row["Challan Date"] && 
+        row["Item Name"] && 
+        row["Item Total"]
+      )
+      .map((row: Record<string, unknown>) => {
+        try {
+          // Process date
+          const challanDateStr = String(row["Challan Date"]);
+          const dateParts = challanDateStr.split('/');
+          let challanDate: Date;
+          
+          if (dateParts.length === 3) {
+            // Handle MM/DD/YYYY format
+            const month = parseInt(dateParts[0], 10) - 1; // 0-indexed month
+            const day = parseInt(dateParts[1], 10);
+            let year = parseInt(dateParts[2], 10);
+            
+            // Handle 2-digit years
+            if (year < 100) {
+              year += year < 50 ? 2000 : 1900;
             }
-
-            const processedData: ProcessedData[] = results.data
-              .filter((row) => {
-                return (
-                  row &&
-                  row["Challan Date"] &&
-                  row["Item Name"] &&
-                  row["Item Total"] &&
-                  row["Customer Name"] &&
-                  row["Delivery Challan Number"]
-                )
-              })
-              .map((row) => {
-                try {
-                  const challanDate = new Date(row["Challan Date"])
-                  if (isNaN(challanDate.getTime())) {
-                    throw new Error(`Invalid date: ${row["Challan Date"]}`)
-                  }
-
-                  const itemNameCleaned = (row["Item Name"] || "").trim().toLowerCase()
-                  const category =
-                    reverseMap[itemNameCleaned] || findCategoryByKeywords(itemNameCleaned) || "Uncategorized"
-
-                  // Handle different number formats
-                  const itemTotalStr = (row["Item Total"] || "0")
-                    .toString()
-                    .replace(/[₹,\s]/g, "")
-                    .replace(/[^\d.-]/g, "")
-
-                  const itemTotal = Number.parseFloat(itemTotalStr) || 0
-
-                  return {
-                    ...row,
-                    challanDate,
-                    itemNameCleaned,
-                    category,
-                    month: challanDate.toLocaleDateString("en-US", {
-                      month: "long",
-                      year: "numeric",
-                    }),
-                    year: challanDate.getFullYear(),
-                    monthNum: challanDate.getMonth() + 1,
-                    itemTotal,
-                  }
-                } catch (error) {
-                  console.warn("Error processing row:", row, error)
-                  return null
-                }
-              })
-              .filter((row): row is ProcessedData => row !== null && row.itemTotal > 0)
-
-            console.log(`Successfully processed ${processedData.length} records from ${results.data.length} total rows`)
-
-            if (processedData.length === 0) {
-              throw new Error("No valid data found in CSV file")
-            }
-
-            resolve(processedData)
-          } catch (error) {
-            console.error("Error processing CSV data:", error)
-            reject(error)
+            
+            challanDate = new Date(year, month, day);
+          } else {
+            // Fallback for other formats
+            challanDate = new Date(challanDateStr);
           }
-        },
-        error: (error: Error, file?: any) => {
-          console.error("Papa Parse error:", error)
-          reject(new Error(`CSV parsing failed: ${error.message}`))
-        },
+          
+          // Extract month and year
+          const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+          const month = monthNames[challanDate.getMonth()];
+          const year = challanDate.getFullYear();
+          const monthNum = challanDate.getMonth() + 1;
+          
+          // Process item name
+          const itemName = String(row["Item Name"] || "").toLowerCase().trim();
+          
+          // Determine category
+          let category = "Other";
+          for (const [cat, keywords] of Object.entries(categoryMap)) {
+            if (keywords.some(keyword => itemName.includes(keyword))) {
+              category = cat;
+              break;
+            }
+          }
+          
+          // Parse item total
+          let itemTotal = 0;
+          if (row["Item Total"]) {
+            // Remove currency symbols and commas, then parse
+            const numStr = String(row["Item Total"])
+              .replace(/[₹$,]/g, '')
+              .trim();
+            itemTotal = parseFloat(numStr) || 0;
+          }
+          
+          // Create a properly typed object by explicitly defining each field
+          const processedRow: ProcessedData = {
+            "Delivery Challan ID": String(row["Delivery Challan ID"] || ""),
+            "Challan Date": String(row["Challan Date"] || ""),
+            "Delivery Challan Number": String(row["Delivery Challan Number"] || ""),
+            "Customer Name": String(row["Customer Name"] || ""),
+            "Item Name": String(row["Item Name"] || ""),
+            "Item Total": String(row["Item Total"] || ""),
+            challanDate,
+            itemNameCleaned: itemName,
+            category,
+            month,
+            year,
+            monthNum,
+            itemTotal
+          };
+          
+          // Add any other fields from the original row
+          for (const key in row) {
+            if (
+              key !== "Delivery Challan ID" && 
+              key !== "Challan Date" && 
+              key !== "Delivery Challan Number" && 
+              key !== "Customer Name" && 
+              key !== "Item Name" && 
+              key !== "Item Total"
+            ) {
+              (processedRow as any)[key] = row[key];
+            }
+          }
+          
+          return processedRow;
+        } catch (err) {
+          console.error("Error processing row:", row, err);
+          return null;
+        }
       })
-    })
+      .filter(Boolean) as ProcessedData[];
+
+    // Update cache with processed data
+    dataCache = {
+      data: processedData,
+      timestamp: currentTime
+    };
+      
+    return processedData;
   } catch (error) {
-    console.error("Error loading CSV:", error)
-    throw new Error(`Failed to load data: ${error instanceof Error ? error.message : "Unknown error"}`)
+    console.error("Error loading data:", error);
+    throw error;
   }
 }
 
-function findCategoryByKeywords(itemName: string): string | null {
-  for (const [category, keywords] of Object.entries(categoryMap)) {
-    if (keywords.some((keyword) => itemName.includes(keyword.toLowerCase()))) {
-      return category
-    }
-  }
-  return null
-}
-
+/**
+ * Format a number as currency
+ */
 export function formatCurrency(amount: number): string {
-  if (isNaN(amount) || amount === null || amount === undefined) {
-    return "₹0"
-  }
-
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
     minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(amount)
+    maximumFractionDigits: 0
+  }).format(amount);
 }
 
+/**
+ * Format a number with appropriate suffixes (K, M, B)
+ */
 export function formatNumber(num: number): string {
-  if (isNaN(num) || num === null || num === undefined) {
-    return "0"
+  if (num >= 1000000000) {
+    return (num / 1000000000).toFixed(1) + 'B';
   }
+  if (num >= 1000000) {
+    return (num / 1000000).toFixed(1) + 'M';
+  }
+  if (num >= 1000) {
+    return (num / 1000).toFixed(1) + 'K';
+  }
+  return num.toString();
+}
 
-  return new Intl.NumberFormat("en-IN").format(num)
+/**
+ * Validate processed data and remove invalid entries
+ * 
+ * @param data Data to validate
+ * @returns Validated data array
+ */
+export function validateProcessedData(data: ProcessedData[]): ProcessedData[] {
+  return data.filter(item => {
+    // Basic validation - ensure required fields exist
+    if (!item) return false;
+    
+    // Handle and fix date field if needed
+    if (!item.challanDate) {
+      return false;
+    }
+    
+    // If challanDate isn't a Date object, try to convert it
+    if (!(item.challanDate instanceof Date)) {
+      try {
+        // @ts-ignore - We know this might not be a Date yet
+        item.challanDate = new Date(item.challanDate);
+      } catch (e) {
+        console.error("Failed to convert challanDate to Date object:", e);
+        return false;
+      }
+    }
+    
+    // Check if it's a valid date after conversion
+    if (isNaN(item.challanDate.getTime())) {
+      return false;
+    }
+    
+    // Validate item total
+    if (typeof item.itemTotal !== 'number' || isNaN(item.itemTotal)) {
+      // Try to convert if possible
+      try {
+        // Use "Item Total" string field instead if available
+        if (item["Item Total"] && typeof item["Item Total"] === 'string') {
+          const numStr = item["Item Total"].replace(/[₹$,]/g, '').trim();
+          item.itemTotal = parseFloat(numStr) || 0;
+        } else {
+          item.itemTotal = 0;
+        }
+      } catch (e) {
+        item.itemTotal = 0;
+      }
+    }
+    
+    // Ensure other required fields are present
+    if (!item["Delivery Challan ID"] || !item["Item Name"]) {
+      return false;
+    }
+    
+    return true;
+  });
 }

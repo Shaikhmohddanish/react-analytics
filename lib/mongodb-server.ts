@@ -1,4 +1,5 @@
 import { MongoClient, ObjectId } from 'mongodb';
+import { DeliveryData, CSVFileInfo, FileUploadHistory, normalizeMongoData } from '@/models';
 
 // Check if we're in a Node.js runtime environment
 // This prevents MongoDB connections during build time
@@ -215,23 +216,53 @@ export async function storeDeliveryDataServer(data: any[], fileId: string) {
     
     const collection = db.collection(dataCollection);
     
+    // Process the data to ensure proper formatting and structure
+    const processedData = data.map((item: any) => {
+      // First normalize the data using our model
+      const normalizedItem = normalizeMongoData({
+        ...item,
+        // Add any missing fields with defaults
+        challanDateObj: item.challanDateObj || new Date(),
+        deliveryChallanId: item.deliveryChallanId || item["Delivery Challan ID"] || "",
+        challanDate: item.challanDate || item["Challan Date"] || "",
+        deliveryChallanNumber: item.deliveryChallanNumber || item["Delivery Challan Number"] || "",
+        customerName: item.customerName || item["Customer Name"] || "",
+        itemName: item.itemName || item["Item Name"] || "",
+        itemTotalRaw: item.itemTotalRaw || item["Item Total"] || "0",
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+      
+      return normalizedItem;
+    });
+    
+    // Filter out any invalid data
+    const validData = processedData.filter((item: DeliveryData) => 
+      item.deliveryChallanId && 
+      item.challanDate && 
+      item.itemName
+    );
+    
+    console.log(`Filtered out ${processedData.length - validData.length} invalid records`);
+    
     // Add file reference to each record
     let dataWithFileId;
     try {
-      dataWithFileId = data.map(item => {
-        console.log("Preparing item for insertion:", item);
-        return {
-          ...item,
-          fileId: new ObjectId(fileId)
-        };
-      });
+      dataWithFileId = validData.map(item => ({
+        ...item,
+        fileId: new ObjectId(fileId)
+      }));
     } catch (error) {
       console.error("Error creating ObjectId:", error);
       // Fallback if ObjectId creation fails
-      dataWithFileId = data.map(item => ({
+      dataWithFileId = validData.map(item => ({
         ...item,
         fileId: fileId
       }));
+    }
+    
+    if (dataWithFileId.length === 0) {
+      throw new Error("No valid data to store after processing");
     }
     
     // Insert all records
@@ -337,6 +368,11 @@ export async function testMongoDBConnection() {
 }
 
 // Get delivery data from MongoDB
+/**
+ * Get delivery data from the database with proper data normalization and processing
+ * @param fileId Optional file ID to filter data by specific file
+ * @returns Processed delivery data or error
+ */
 export async function getDeliveryDataServer(fileId?: string) {
   try {
     const db = await connectToDatabase();
@@ -345,14 +381,115 @@ export async function getDeliveryDataServer(fileId?: string) {
     let query = {};
     
     if (fileId) {
-      query = { fileId: new ObjectId(fileId) };
+      try {
+        query = { fileId: new ObjectId(fileId) };
+      } catch (e) {
+        // If the fileId is not a valid ObjectId, use it as a string
+        query = { fileId: fileId };
+      }
     }
     
-    const data = await collection.find(query).toArray();
+    // Get data from MongoDB
+    const rawData = await collection.find(query).toArray();
+    
+    // Process the data to ensure consistent structure
+    const processedData = rawData.map((item: any) => {
+      // Process date fields
+      let challanDateObj = null;
+      let month = '';
+      let year = 0;
+      let monthNum = 0;
+      
+      // Get date value from either processed field or original field
+      const dateStr = item.challanDate || item["Challan Date"];
+      
+      if (dateStr) {
+        try {
+          const dateParts = String(dateStr).split('/');
+          
+          if (dateParts.length === 3) {
+            // Handle MM/DD/YYYY format
+            const m = parseInt(dateParts[0], 10) - 1; // 0-indexed month
+            const d = parseInt(dateParts[1], 10);
+            let y = parseInt(dateParts[2], 10);
+            
+            // Handle 2-digit years
+            if (y < 100) {
+              y += y < 50 ? 2000 : 1900;
+            }
+            
+            challanDateObj = new Date(y, m, d);
+            if (!isNaN(challanDateObj.getTime())) {
+              const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+              month = monthNames[challanDateObj.getMonth()];
+              year = challanDateObj.getFullYear();
+              monthNum = challanDateObj.getMonth() + 1;
+            }
+          } else {
+            // Try direct date parsing as fallback
+            challanDateObj = new Date(dateStr);
+            if (!isNaN(challanDateObj.getTime())) {
+              const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+              month = monthNames[challanDateObj.getMonth()];
+              year = challanDateObj.getFullYear();
+              monthNum = challanDateObj.getMonth() + 1;
+            }
+          }
+        } catch (e) {
+          console.error("Error processing date:", dateStr, e);
+        }
+      }
+      
+      // Process itemTotal
+      const itemTotalStr = item.itemTotalRaw || item["Item Total"] || "0";
+      let itemTotal = 0;
+      
+      try {
+        // Remove currency symbols and commas, then parse
+        const numStr = String(itemTotalStr).replace(/[₹$,]/g, '').trim();
+        itemTotal = parseFloat(numStr) || 0;
+      } catch (e) {
+        console.error("Error parsing item total:", itemTotalStr, e);
+      }
+      
+      // Process item name and category
+      const itemName = item.itemName || item["Item Name"] || "";
+      const itemNameCleaned = String(itemName).toLowerCase().trim();
+      
+      // Create normalized document using our model
+      return normalizeMongoData({
+        _id: item._id,
+        deliveryChallanId: String(item.deliveryChallanId || item["Delivery Challan ID"] || ""),
+        challanDate: String(dateStr || ""),
+        deliveryChallanNumber: String(item.deliveryChallanNumber || item["Delivery Challan Number"] || ""),
+        customerName: String(item.customerName || item["Customer Name"] || ""),
+        itemName: String(itemName || ""),
+        itemTotalRaw: String(itemTotalStr || "0"),
+        challanDateObj: challanDateObj || null,
+        month: String(month || ""),
+        year: Number(year || 0),
+        monthNum: Number(monthNum || 0),
+        itemTotal: Number(itemTotal || 0),
+        itemNameCleaned: String(itemNameCleaned || ""),
+        category: String(item.category || "Other"),
+        fileId: item.fileId,
+        createdAt: item.createdAt instanceof Date ? item.createdAt : new Date(),
+        updatedAt: item.updatedAt instanceof Date ? item.updatedAt : new Date()
+      });
+    });
+    
+    // Filter out any potentially invalid data
+    const validData = processedData.filter((item: DeliveryData) => 
+      item.deliveryChallanId && 
+      item.challanDateObj && 
+      !isNaN(item.itemTotal)
+    );
+    
+    console.log(`Filtered ${processedData.length - validData.length} invalid records out of ${processedData.length}`);
     
     return {
       success: true,
-      data: data
+      data: validData
     };
   } catch (error) {
     console.error("Error getting delivery data:", error);
