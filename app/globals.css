@@ -162,20 +162,40 @@
   .flex-responsive-reverse {
     @apply flex flex-col-reverse sm:flex-row;
   }
+  
+  /* Detect overflow for better mobile handling */
+  .detect-overflow {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
   .card-content-spacing {
-    @apply p-3 sm:p-4 lg:p-6;
+    padding: 0.75rem;
+  }
+  @media (min-width: 640px) {
+    .card-content-spacing {
+      padding: 1rem;
+    }
+  }
+  @media (min-width: 1024px) {
+    .card-content-spacing {
+      padding: 1.5rem;
+    }
   }
 
   .touch-target {
-    @apply min-h-[44px] min-w-[44px];
+    min-height: 44px;
+    min-width: 44px;
   }
-}
 
 /* Fix for text overflow in cards */
 .card-title {
-  @apply truncate;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 /* Ensure proper spacing in mobile */
@@ -187,15 +207,37 @@
   .space-y-6 > * + * {
     margin-top: 1.5rem;
   }
+  
+  /* Mobile-optimized form controls */
+  select, 
+  input[type="text"],
+  input[type="search"],
+  input[type="email"],
+  input[type="number"],
+  input[type="date"] {
+    font-size: 16px !important; /* Prevents iOS zoom on focus */
+    min-height: 44px; /* Apple's recommended minimum touch target size */
+  }
+  
+  /* Improved spacing for stacked forms */
+  .form-row {
+    margin-bottom: 1rem;
+  }
+  
+  /* Larger checkboxes and radio buttons on mobile */
+  input[type="checkbox"],
+  input[type="radio"] {
+    transform: scale(1.2);
+  }
 }
 
 /* Chart responsive fixes */
 .recharts-wrapper {
-  @apply w-full;
+  width: 100%;
 }
 
 .recharts-surface {
-  @apply overflow-visible;
+  overflow: visible;
 }
 
 /* Mobile-specific chart adjustments */
@@ -210,5 +252,15 @@
 
   .recharts-tooltip-wrapper {
     font-size: 12px !important;
+  }
+  
+  /* Improved touch targets for mobile */
+  .recharts-wrapper .recharts-surface {
+    cursor: pointer;
+  }
+  
+  /* Better labels for small screens */
+  .recharts-text.recharts-label {
+    font-size: 11px !important;
   }
 }
