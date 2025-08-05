@@ -70,34 +70,99 @@
 
 /* Custom responsive utilities */
 @layer utilities {
+  /* Enhanced responsive grid configurations */
   .responsive-grid {
-    @apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4;
+    @apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4;
   }
-
+  
   .responsive-grid-2 {
-    @apply grid grid-cols-1 xl:grid-cols-2 gap-6;
+    @apply grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6;
   }
-
+  
+  .responsive-grid-3 {
+    @apply grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4;
+  }
+  
+  /* Additional responsive text utilities */
+  .text-responsive-xs {
+    @apply text-xs sm:text-sm;
+  }
+  
+  .text-responsive-sm {
+    @apply text-sm sm:text-base;
+  }
+  
+  .text-responsive-base {
+    @apply text-sm sm:text-base md:text-base;
+  }
+  
   .text-responsive-lg {
-    @apply text-base sm:text-lg;
+    @apply text-base sm:text-lg md:text-lg lg:text-xl;
   }
-
+  
   .text-responsive-xl {
-    @apply text-lg sm:text-xl;
+    @apply text-lg sm:text-xl md:text-xl lg:text-2xl;
   }
-
+  
+  .text-responsive-2xl {
+    @apply text-xl sm:text-2xl md:text-2xl lg:text-3xl;
+  }
+  
+  /* Text handling utilities */
   .break-word {
     word-break: break-word;
     overflow-wrap: break-word;
   }
-
+  
+  .mobile-truncate {
+    @apply truncate max-w-[180px] sm:max-w-none;
+  }
+  
+  /* Enhanced chart containers with better mobile responsiveness */
   .chart-container {
-    @apply h-[300px] sm:h-[350px] w-full;
+    @apply h-[250px] sm:h-[300px] md:h-[350px] lg:h-[400px] w-full;
+    min-height: 250px;
   }
-
+  
   .chart-container-sm {
-    @apply h-[250px] sm:h-[300px] w-full;
+    @apply h-[200px] sm:h-[250px] md:h-[275px] w-full;
+    min-height: 200px;
   }
+  
+  .chart-container-lg {
+    @apply h-[300px] sm:h-[350px] md:h-[400px] lg:h-[500px] w-full;
+    min-height: 300px;
+  }
+  
+  /* Mobile-optimized spacing and layout */
+  .card-content-spacing {
+    @apply p-3 sm:p-4 lg:p-6;
+  }
+  
+  .mobile-container {
+    @apply px-3 sm:px-4 lg:px-6 py-4 sm:py-6;
+  }
+  
+  .mobile-touch-target {
+    @apply min-h-[44px] min-w-[44px];
+  }
+  
+  /* Mobile-optimized scrollable areas */
+  .mobile-scrollable {
+    @apply overflow-x-auto pb-2 -mx-3 sm:mx-0 px-3 sm:px-0;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+  
+  /* Flexbox utilities for responsive layouts */
+  .flex-responsive {
+    @apply flex flex-col sm:flex-row;
+  }
+  
+  .flex-responsive-reverse {
+    @apply flex flex-col-reverse sm:flex-row;
+  }
+}
 
   .card-content-spacing {
     @apply p-3 sm:p-4 lg:p-6;

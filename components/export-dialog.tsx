@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
@@ -16,14 +16,21 @@ import {
 import { Download, FileText, ImageIcon, Table } from "lucide-react"
 import { useFilter } from "@/contexts/filter-context"
 import { useToast } from "@/hooks/use-toast"
-import { exportToCSV, exportToPDF, exportToExcel } from "@/lib/export-utils"
+import { exportToCSV, exportToPDF, exportToExcel, captureChartElements } from "@/lib/export-utils"
 
 interface ExportDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  chartSelectors?: string[]
+  title?: string
 }
 
-export function ExportDialog({ open, onOpenChange }: ExportDialogProps) {
+export function ExportDialog({ 
+  open, 
+  onOpenChange, 
+  chartSelectors = [],
+  title = "Delivery Analytics"
+}: ExportDialogProps) {
   const { filteredData } = useFilter()
   const { toast } = useToast()
   const [format, setFormat] = useState("csv")
@@ -36,41 +43,72 @@ export function ExportDialog({ open, onOpenChange }: ExportDialogProps) {
     "Item Total",
     "Delivery Challan Number",
   ])
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [chartsAvailable, setChartsAvailable] = useState(false)
 
   const availableFields = [
     "Customer Name",
-    "Item Name",
+    "Item Name", 
     "Category",
     "Challan Date",
     "Item Total",
     "Delivery Challan Number",
     "Month",
     "Year",
+    "Customer Type",
+    "Product Category"
   ]
 
+  // Check if charts are available when dialog opens
+  useEffect(() => {
+    if (open && chartSelectors.length > 0) {
+      const hasCharts = chartSelectors.some(selector => document.querySelector(selector));
+      setChartsAvailable(hasCharts);
+    }
+  }, [open, chartSelectors]);
+
   const handleExport = async () => {
+    if (selectedFields.length === 0) {
+      toast({
+        title: "No fields selected",
+        description: "Please select at least one field to export",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setIsProcessing(true)
+    
     try {
       const dataToExport = filteredData.map((item) => {
         const exportItem: any = {}
         selectedFields.forEach((field) => {
-          if (field === "Challan Date") {
+          if (field === "Challan Date" && item.challanDate instanceof Date) {
             exportItem[field] = item.challanDate.toLocaleDateString()
           } else {
-            exportItem[field] = (item as any)[field]
+            // Handle all types of data by converting to string if necessary
+            const value = (item as any)[field]
+            exportItem[field] = value !== undefined ? value : ''
           }
         })
         return exportItem
       })
 
+      // Capture chart elements if including charts and we're exporting to PDF
+      let chartElements: HTMLElement[] = []
+      if (format === "pdf" && includeCharts && chartSelectors.length > 0) {
+        chartElements = await captureChartElements(chartSelectors)
+      }
+
       switch (format) {
         case "csv":
-          exportToCSV(dataToExport, "delivery-analytics")
+          exportToCSV(dataToExport, title)
           break
         case "excel":
-          await exportToExcel(dataToExport, "delivery-analytics")
+          await exportToExcel(dataToExport, title)
           break
         case "pdf":
-          await exportToPDF(dataToExport, "delivery-analytics", includeCharts)
+          await exportToPDF(dataToExport, title, includeCharts, chartElements)
           break
       }
 
@@ -81,11 +119,14 @@ export function ExportDialog({ open, onOpenChange }: ExportDialogProps) {
 
       onOpenChange(false)
     } catch (error) {
+      console.error('Export error:', error)
       toast({
         title: "Export failed",
-        description: "There was an error exporting your data",
+        description: "There was an error exporting your data. Please try again.",
         variant: "destructive",
       })
+    } finally {
+      setIsProcessing(false)
     }
   }
 
@@ -152,9 +193,13 @@ export function ExportDialog({ open, onOpenChange }: ExportDialogProps) {
           </div>
 
           {/* PDF Options */}
-          {format === "pdf" && (
+          {format === "pdf" && chartsAvailable && (
             <div className="flex items-center space-x-2">
-              <Checkbox id="include-charts" checked={includeCharts} onCheckedChange={setIncludeCharts} />
+              <Checkbox 
+                id="include-charts" 
+                checked={includeCharts} 
+                onCheckedChange={(checked) => setIncludeCharts(checked === true)}
+              />
               <Label htmlFor="include-charts" className="text-sm">
                 Include charts and visualizations
               </Label>
@@ -166,9 +211,16 @@ export function ExportDialog({ open, onOpenChange }: ExportDialogProps) {
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleExport} disabled={selectedFields.length === 0}>
-            <Download className="mr-2 h-4 w-4" />
-            Export
+          <Button 
+            onClick={handleExport} 
+            disabled={selectedFields.length === 0 || isProcessing}
+          >
+            {isProcessing ? "Processing..." : (
+              <>
+                <Download className="mr-2 h-4 w-4" />
+                Export
+              </>
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>

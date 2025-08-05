@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { useData } from "@/contexts/data-context"
 import { useFilter } from "@/contexts/filter-context"
+import { MonthlyBreakdownChart } from "@/components/monthly-breakdown-chart"
 import {
   TrendingUp,
   TrendingDown,
@@ -484,6 +485,11 @@ export default function OverviewPage() {
           </div>
         </CardContent>
       </Card>
+      
+      {/* Monthly Breakdown Chart */}
+      <div className="mt-6">
+        <MonthlyBreakdownChart height={400} />
+      </div>
     </div>
   )
 }

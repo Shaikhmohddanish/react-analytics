@@ -1,6 +1,6 @@
 "use client"
 
-import React from "react"
+import React, { useState, useMemo, useCallback, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useData } from "@/contexts/data-context"
 import { useFilters } from "@/contexts/filter-context"
+import { ExportButton } from "@/components/export-button"
+import useResponsive from "@/hooks/use-responsive"
 import {
   Search,
   Filter,
@@ -25,6 +27,7 @@ import {
   Activity,
   ChevronLeft,
   ChevronRight,
+  Loader2,
 } from "lucide-react"
 import {
   Pagination,
@@ -46,27 +49,36 @@ import {
   ScatterChart,
   Scatter,
 } from "recharts"
+import { VirtualizedTable } from "@/components/ui/virtualized-table"
+import { LazyChart } from "@/components/ui/lazy-chart"
+import { LazyChartWrapper } from "@/components/ui/lazy-chart-wrapper"
+import { Progress } from "@/components/ui/progress"
+import { paginateData } from "@/lib/data-utils"
 
 export default function DealerAnalyticsPage() {
+  // Get responsive screen size
+  const { isMobile, isTablet, isDesktop } = useResponsive();
   const { data, loading } = useData()
-  const { filteredData } = useFilters()
-  const [searchTerm, setSearchTerm] = React.useState("")
-  const [selectedTier, setSelectedTier] = React.useState<string>("all")
-  const [dateRange, setDateRange] = React.useState<string>("all")
-  const [viewMode, setViewMode] = React.useState<"grid" | "chart" | "comparison">("grid")
-  const [sortBy, setSortBy] = React.useState<"sales" | "growth" | "loyalty" | "orders">("sales")
+  const { filteredData, isFiltering, filterProgress } = useFilters()
+  const [searchTerm, setSearchTerm] = useState("")
+  const [selectedTier, setSelectedTier] = useState<string>("all")
+  const [dateRange, setDateRange] = useState<string>("all")
+  const [viewMode, setViewMode] = useState("grid")
+  const [sortBy, setSortBy] = useState<"sales" | "growth" | "loyalty" | "orders">("sales")
   
-  // Pagination state
-  const [currentPage, setCurrentPage] = React.useState(1)
-  const itemsPerPage = 10
+  // Pagination state - managed with optimized pagination function
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const [tableHeight, setTableHeight] = useState(500)
+  const itemsPerPage = pageSize
 
   // Reset pagination when filters change
   React.useEffect(() => {
     setCurrentPage(1)
   }, [searchTerm, selectedTier, dateRange, sortBy])
 
-  // Advanced dealer analytics with comprehensive filtering
-  const dealerAnalytics = React.useMemo(() => {
+  // Advanced dealer analytics with comprehensive filtering - wrapped in useMemo
+  const dealerAnalytics = useMemo(() => {
     if (!filteredData.length) return null
 
     // Filter by date range
@@ -78,7 +90,7 @@ export default function DealerAnalyticsPage() {
       dateFilteredData = filteredData.filter((item) => item.challanDate >= cutoffDate)
     }
 
-    // Comprehensive dealer analysis
+    // Comprehensive dealer analysis - using the native JavaScript reduce for best performance
     const dealerData = dateFilteredData.reduce(
       (acc, item) => {
         const dealer = item["Customer Name"]
@@ -253,7 +265,38 @@ export default function DealerAnalyticsPage() {
       totalDealers: dealerMetrics.length,
       filteredCount: filteredDealers.length,
     }
-  }, [filteredData, searchTerm, selectedTier, dateRange, sortBy])
+  }, [filteredData, searchTerm, selectedTier, dateRange, sortBy]);
+
+  // Calculate paginated data - moved after dealerAnalytics is defined
+  const paginatedData = useMemo(() => {
+    if (!dealerAnalytics) return { 
+      data: [], 
+      pagination: { 
+        totalItems: 0, 
+        currentPage: 1, 
+        pageSize, 
+        totalPages: 1, 
+        hasNextPage: false, 
+        hasPreviousPage: false 
+      } 
+    };
+    
+    const startIndex = (currentPage - 1) * pageSize;
+    const endIndex = startIndex + pageSize;
+    const items = dealerAnalytics.dealerMetrics.slice(startIndex, endIndex);
+    
+    return { 
+      data: items, 
+      pagination: {
+        totalItems: dealerAnalytics.dealerMetrics.length,
+        currentPage,
+        pageSize,
+        totalPages: Math.ceil(dealerAnalytics.dealerMetrics.length / pageSize),
+        hasNextPage: endIndex < dealerAnalytics.dealerMetrics.length,
+        hasPreviousPage: startIndex > 0
+      } 
+    };
+  }, [dealerAnalytics, currentPage, pageSize]);
 
   if (loading) {
     return (
@@ -320,106 +363,122 @@ export default function DealerAnalyticsPage() {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {/* Filter Controls */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="search">Search Dealers</Label>
-                <div className="relative">
-                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground flex-shrink-0" />
-                  <Input
-                    id="search"
-                    placeholder="Search by name..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-8"
-                  />
+            {/* Filter Controls - Enhanced Mobile Responsiveness */}
+            <div className="space-y-4">
+              {/* Search - Full width on mobile, then grid layout on larger screens */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="search" className="text-responsive-sm">Search Dealers</Label>
+                  <div className="relative">
+                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground flex-shrink-0" />
+                    <Input
+                      id="search"
+                      placeholder="Search by name..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="pl-8 mobile-touch-target"
+                    />
+                  </div>
+                </div>
+    
+                <div className="space-y-2">
+                  <Label className="text-responsive-sm">Tier Filter</Label>
+                  <Select value={selectedTier} onValueChange={setSelectedTier}>
+                    <SelectTrigger className="mobile-touch-target">
+                      <SelectValue placeholder="Select tier" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Tiers</SelectItem>
+                      <SelectItem value="Platinum">Platinum</SelectItem>
+                      <SelectItem value="Gold">Gold</SelectItem>
+                      <SelectItem value="Silver">Silver</SelectItem>
+                      <SelectItem value="Bronze">Bronze</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+    
+                <div className="space-y-2">
+                  <Label className="text-responsive-sm">Date Range</Label>
+                  <Select value={dateRange} onValueChange={setDateRange}>
+                    <SelectTrigger className="mobile-touch-target">
+                      <SelectValue placeholder="Select range" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Time</SelectItem>
+                      <SelectItem value="3">Last 3 Months</SelectItem>
+                      <SelectItem value="6">Last 6 Months</SelectItem>
+                      <SelectItem value="12">Last 12 Months</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+    
+                <div className="space-y-2">
+                  <Label className="text-responsive-sm">Sort By</Label>
+                  <Select value={sortBy} onValueChange={(value: any) => setSortBy(value)}>
+                    <SelectTrigger className="mobile-touch-target">
+                      <SelectValue placeholder="Sort by" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="sales">Total Sales</SelectItem>
+                      <SelectItem value="growth">Growth Rate</SelectItem>
+                      <SelectItem value="loyalty">Loyalty Score</SelectItem>
+                      <SelectItem value="orders">Order Count</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
-
-              <div className="space-y-2">
-                <Label>Tier Filter</Label>
-                <Select value={selectedTier} onValueChange={setSelectedTier}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select tier" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Tiers</SelectItem>
-                    <SelectItem value="Platinum">Platinum</SelectItem>
-                    <SelectItem value="Gold">Gold</SelectItem>
-                    <SelectItem value="Silver">Silver</SelectItem>
-                    <SelectItem value="Bronze">Bronze</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Date Range</Label>
-                <Select value={dateRange} onValueChange={setDateRange}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select range" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Time</SelectItem>
-                    <SelectItem value="3">Last 3 Months</SelectItem>
-                    <SelectItem value="6">Last 6 Months</SelectItem>
-                    <SelectItem value="12">Last 12 Months</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label>Sort By</Label>
-                <Select value={sortBy} onValueChange={(value: any) => setSortBy(value)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Sort by" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="sales">Total Sales</SelectItem>
-                    <SelectItem value="growth">Growth Rate</SelectItem>
-                    <SelectItem value="loyalty">Loyalty Score</SelectItem>
-                    <SelectItem value="orders">Order Count</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            {/* View Mode Controls */}
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div className="flex items-center space-x-2">
-                <Filter className="h-4 w-4 text-muted-foreground flex-shrink-0" />
-                <span className="text-sm text-muted-foreground">
-                  Showing {dealerAnalytics.filteredCount} of {dealerAnalytics.totalDealers} dealers
-                </span>
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  variant={viewMode === "grid" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setViewMode("grid")}
-                  className="touch-target"
-                >
-                  <Grid3X3 className="h-4 w-4 mr-2 flex-shrink-0" />
-                  Grid View
-                </Button>
-                <Button
-                  variant={viewMode === "chart" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setViewMode("chart")}
-                  className="touch-target"
-                >
-                  <BarChart3 className="h-4 w-4 mr-2 flex-shrink-0" />
-                  Chart View
-                </Button>
-                <Button
-                  variant={viewMode === "comparison" ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => setViewMode("comparison")}
-                  className="touch-target"
-                >
-                  <Users className="h-4 w-4 mr-2 flex-shrink-0" />
-                  Comparison
-                </Button>
+            
+              {/* View Mode Controls - Stack on mobile, side-by-side on larger screens */}
+              <div className="flex-responsive space-y-3 sm:space-y-0 items-start sm:items-center justify-between sm:gap-4">
+                <div className="flex items-center space-x-2">
+                  <Filter className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                  <span className="text-responsive-xs text-muted-foreground">
+                    Showing {dealerAnalytics.filteredCount} of {dealerAnalytics.totalDealers} dealers
+                  </span>
+                </div>
+    
+                {/* Horizontally scrollable view buttons on mobile */}
+                <div className="mobile-scrollable sm:overflow-visible">
+                  <div className="flex gap-2 w-max sm:w-auto">
+                    <Button
+                      variant={viewMode === "grid" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setViewMode("grid")}
+                      className="mobile-touch-target"
+                    >
+                      <Grid3X3 className="h-4 w-4 mr-1 sm:mr-2 flex-shrink-0" />
+                      <span className="sm:inline">Grid View</span>
+                      <span className="inline sm:hidden">Grid</span>
+                    </Button>
+                    <Button
+                      variant={viewMode === "chart" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setViewMode("chart")}
+                      className="mobile-touch-target"
+                    >
+                      <BarChart3 className="h-4 w-4 mr-1 sm:mr-2 flex-shrink-0" />
+                      <span className="sm:inline">Chart View</span>
+                      <span className="inline sm:hidden">Charts</span>
+                    </Button>
+                    <Button
+                      variant={viewMode === "comparison" ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setViewMode("comparison")}
+                      className="mobile-touch-target"
+                    >
+                      <Users className="h-4 w-4 mr-1 sm:mr-2 flex-shrink-0" />
+                      <span className="sm:inline">Comparison</span>
+                      <span className="inline sm:hidden">Compare</span>
+                    </Button>
+                    
+                    <ExportButton 
+                      chartSelectors={["#dealer-sales-chart", "#dealer-growth-chart"]} 
+                      title="Dealer-Analytics"
+                      size="sm"
+                      className="mobile-touch-target"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -427,30 +486,32 @@ export default function DealerAnalyticsPage() {
       </Card>
 
       {/* Summary Stats */}
+      {/* Enhanced mobile-responsive stats grid */}
       <div className="responsive-grid">
-        <Card className="min-h-[120px]">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-wrap">Active Dealers</CardTitle>
+        {/* Mobile optimized cards with improved spacing */}
+        <Card className="min-h-[110px] sm:min-h-[120px]">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 sm:pb-2 px-3 py-2 sm:p-4">
+            <CardTitle className="text-responsive-xs font-medium text-wrap">Active Dealers</CardTitle>
             <Users className="h-4 w-4 text-muted-foreground flex-shrink-0" />
           </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="text-xl sm:text-2xl font-bold">{formatNumber(dealerAnalytics.filteredCount)}</div>
+          <CardContent className="space-y-1 sm:space-y-2 px-3 pb-3 sm:p-4">
+            <div className="text-responsive-xl font-bold">{formatNumber(dealerAnalytics.filteredCount)}</div>
             <div className="flex items-center space-x-2">
               <Crown className="h-3 w-3 text-purple-500 flex-shrink-0" />
-              <span className="text-xs text-muted-foreground">
+              <span className="text-responsive-xs text-muted-foreground">
                 {dealerAnalytics.tierDistribution.Platinum || 0} Platinum
               </span>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="min-h-[120px]">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-wrap">Avg Growth Rate</CardTitle>
+        <Card className="min-h-[110px] sm:min-h-[120px]">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 sm:pb-2 px-3 py-2 sm:p-4">
+            <CardTitle className="text-responsive-xs font-medium text-wrap">Avg Growth Rate</CardTitle>
             <TrendingUp className="h-4 w-4 text-muted-foreground flex-shrink-0" />
           </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="text-xl sm:text-2xl font-bold">
+          <CardContent className="space-y-1 sm:space-y-2 px-3 pb-3 sm:p-4">
+            <div className="text-responsive-xl font-bold">
               {dealerAnalytics.dealerMetrics.length > 0
                 ? (
                     dealerAnalytics.dealerMetrics.reduce((sum, d) => sum + d.growthRate, 0) /
@@ -461,38 +522,38 @@ export default function DealerAnalyticsPage() {
             </div>
             <div className="flex items-center space-x-2">
               <Activity className="h-3 w-3 text-green-500 flex-shrink-0" />
-              <span className="text-xs text-muted-foreground">
+              <span className="text-responsive-xs text-muted-foreground">
                 {dealerAnalytics.dealerMetrics.filter((d) => d.growthRate > 0).length} growing
               </span>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="min-h-[120px]">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-wrap">Top Performer</CardTitle>
+        <Card className="min-h-[110px] sm:min-h-[120px]">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 sm:pb-2 px-3 py-2 sm:p-4">
+            <CardTitle className="text-responsive-xs font-medium text-wrap">Top Performer</CardTitle>
             <Award className="h-4 w-4 text-muted-foreground flex-shrink-0" />
           </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="text-base sm:text-lg font-bold text-wrap" title={dealerAnalytics.topPerformers[0]?.name}>
+          <CardContent className="space-y-1 sm:space-y-2 px-3 pb-3 sm:p-4">
+            <div className="text-responsive-sm font-bold mobile-truncate" title={dealerAnalytics.topPerformers[0]?.name}>
               {dealerAnalytics.topPerformers[0]?.name || "N/A"}
             </div>
             <div className="flex items-center space-x-2">
               {getTierIcon(dealerAnalytics.topPerformers[0]?.tier || "Bronze")}
-              <span className="text-xs text-muted-foreground">
+              <span className="text-responsive-xs text-muted-foreground">
                 {dealerAnalytics.topPerformers[0]?.marketShare.toFixed(1)}% share
               </span>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="min-h-[120px]">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-wrap">Avg Loyalty</CardTitle>
+        <Card className="min-h-[110px] sm:min-h-[120px]">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 sm:pb-2 px-3 py-2 sm:p-4">
+            <CardTitle className="text-responsive-xs font-medium text-wrap">Avg Loyalty</CardTitle>
             <Target className="h-4 w-4 text-muted-foreground flex-shrink-0" />
           </CardHeader>
-          <CardContent className="space-y-2">
-            <div className="text-xl sm:text-2xl font-bold">
+          <CardContent className="space-y-1 sm:space-y-2 px-3 pb-3 sm:p-4">
+            <div className="text-responsive-xl font-bold">
               {dealerAnalytics.dealerMetrics.length > 0
                 ? Math.round(
                     dealerAnalytics.dealerMetrics.reduce((sum, d) => sum + d.loyaltyScore, 0) /
@@ -502,7 +563,7 @@ export default function DealerAnalyticsPage() {
             </div>
             <div className="flex items-center space-x-2">
               <Star className="h-3 w-3 text-yellow-500 flex-shrink-0" />
-              <span className="text-xs text-muted-foreground">
+              <span className="text-responsive-xs text-muted-foreground">
                 {dealerAnalytics.dealerMetrics.filter((d) => d.loyaltyScore > 70).length} high loyalty
               </span>
             </div>
@@ -511,84 +572,116 @@ export default function DealerAnalyticsPage() {
       </div>
 
       {/* Main Content Area */}
-      {viewMode === "grid" && (
+      {isFiltering && (
+        <div className="my-4">
+          <p className="text-sm text-muted-foreground mb-2">Filtering data... {filterProgress}%</p>
+          <Progress value={filterProgress} className="h-2" />
+        </div>
+      )}
+      
+      {viewMode === "grid" && dealerAnalytics && (
         <div className="space-y-4">
           <div className="text-sm text-muted-foreground">
-            Showing {Math.min((currentPage - 1) * itemsPerPage + 1, dealerAnalytics.dealerMetrics.length)}-
-            {Math.min(currentPage * itemsPerPage, dealerAnalytics.dealerMetrics.length)} of {dealerAnalytics.dealerMetrics.length} dealers
+            Showing {paginatedData.pagination.currentPage > 0 
+              ? (paginatedData.pagination.currentPage - 1) * paginatedData.pagination.pageSize + 1 
+              : 0}-
+            {Math.min(paginatedData.pagination.currentPage * paginatedData.pagination.pageSize, paginatedData.pagination.totalItems)} of {paginatedData.pagination.totalItems} dealers
           </div>
-          {dealerAnalytics.dealerMetrics
-            .slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
-            .map((dealer, index) => (
-            <Card key={dealer.name}>
-              <CardContent className="card-content-spacing">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center space-x-3 min-w-0 flex-1">
-                    <div className="flex-shrink-0 w-10 h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-bold">
-                      {(currentPage - 1) * itemsPerPage + index + 1}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center space-x-2 mb-1">
-                        <h3 className="text-lg font-semibold truncate" title={dealer.name}>
-                          {dealer.name}
-                        </h3>
-                        <Badge className={getTierColor(dealer.tier)}>{dealer.tier}</Badge>
-                        <Badge variant="outline" className="text-xs">
-                          {dealer.percentile}th percentile
-                        </Badge>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                        <span>{dealer.totalOrders} orders</span>
-                        <span>•</span>
-                        <span>{dealer.categories} categories</span>
-                        <span>•</span>
-                        <span>{dealer.recentActivityCount} recent activities</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right flex-shrink-0">
-                    <p className="text-xl font-bold break-word">{formatCurrency(dealer.totalSales)}</p>
-                    <div className="flex items-center space-x-1 justify-end">
-                      {dealer.growthRate >= 0 ? (
-                        <TrendingUp className="h-4 w-4 text-green-500 flex-shrink-0" />
-                      ) : (
-                        <TrendingDown className="h-4 w-4 text-red-500 flex-shrink-0" />
-                      )}
-                      <span
-                        className={`text-sm font-medium ${dealer.growthRate >= 0 ? "text-green-600" : "text-red-600"}`}
-                      >
-                        {dealer.growthRate.toFixed(1)}%
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                  <div className="text-center p-3 rounded-lg bg-muted/50">
-                    <p className="text-xs text-muted-foreground mb-1">Market Share</p>
-                    <p className="text-sm font-bold">{dealer.marketShare.toFixed(2)}%</p>
-                  </div>
-                  <div className="text-center p-3 rounded-lg bg-muted/50">
-                    <p className="text-xs text-muted-foreground mb-1">Loyalty Score</p>
-                    <p className="text-sm font-bold">{dealer.loyaltyScore}</p>
-                  </div>
-                  <div className="text-center p-3 rounded-lg bg-muted/50">
-                    <p className="text-xs text-muted-foreground mb-1">Avg Order</p>
-                    <p className="text-sm font-bold break-word">{formatCurrency(dealer.avgOrderValue)}</p>
-                  </div>
-                  <div className="text-center p-3 rounded-lg bg-muted/50">
-                    <p className="text-xs text-muted-foreground mb-1">Frequency</p>
-                    <p className="text-sm font-bold">{dealer.orderFrequency.toFixed(1)}/mo</p>
-                  </div>
-                </div>
+          
+          {/* Replace the standard mapping with VirtualizedTable for large datasets */}
+          {dealerAnalytics.dealerMetrics.length > 20 ? (
+            <Card>
+              <CardContent className="p-0">
+                <VirtualizedTable
+                  data={dealerAnalytics.dealerMetrics}
+                  columns={[
+                    { key: "rank", header: "#" },
+                    { key: "name", header: "Dealer" },
+                    { key: "tier", header: "Tier" },
+                    { key: "totalSales", header: "Sales" },
+                    { key: "totalOrders", header: "Orders" },
+                    { key: "growthRate", header: "Growth" },
+                    { key: "loyaltyScore", header: "Loyalty" }
+                  ]}
+                  rowHeight={60}
+                  containerHeight={tableHeight}
+                  containerClassName="dealer-table"
+                  getRowId={(dealer) => dealer.name}
+                  emptyMessage="No dealers match your filters"
+                />
               </CardContent>
             </Card>
-          ))}
+          ) : (
+            // For smaller datasets, use the original card-based display
+            paginatedData.data.map((dealer: any, index: number) => (
+              <Card key={dealer.name}>
+                <CardContent className="card-content-spacing">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center space-x-3 min-w-0 flex-1">
+                      <div className="flex-shrink-0 w-10 h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-bold">
+                        {index + 1}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center space-x-2 mb-1">
+                          <h3 className="text-lg font-semibold truncate" title={dealer.name}>
+                            {dealer.name}
+                          </h3>
+                          <Badge className={getTierColor(dealer.tier)}>{dealer.tier}</Badge>
+                          <Badge variant="outline" className="text-xs">
+                            {dealer.percentile}th percentile
+                          </Badge>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                          <span>{dealer.totalOrders} orders</span>
+                          <span>�</span>
+                          <span>{dealer.categories} categories</span>
+                          <span>�</span>
+                          <span>{dealer.recentActivityCount} recent activities</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <div className="font-bold text-lg">{formatCurrency(dealer.totalSales)}</div>
+                      <div className="text-sm text-muted-foreground">
+                        {dealer.growthRate >= 0 ? (
+                          <span className="text-green-600">? {dealer.growthRate.toFixed(1)}%</span>
+                        ) : (
+                          <span className="text-red-600">? {Math.abs(dealer.growthRate).toFixed(1)}%</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <div className="text-center p-3 rounded-lg bg-muted/50">
+                      <p className="text-xs text-muted-foreground mb-1">Loyalty Score</p>
+                      <div className="flex items-center justify-center">
+                        <span className="text-sm font-bold mr-1">{dealer.loyaltyScore}</span>
+                        <Progress value={dealer.loyaltyScore} className="h-2 w-16" />
+                      </div>
+                    </div>
+                    <div className="text-center p-3 rounded-lg bg-muted/50">
+                      <p className="text-xs text-muted-foreground mb-1">Market Share</p>
+                      <p className="text-sm font-bold">{dealer.marketShare.toFixed(2)}%</p>
+                    </div>
+                    <div className="text-center p-3 rounded-lg bg-muted/50">
+                      <p className="text-xs text-muted-foreground mb-1">Avg Order</p>
+                      <p className="text-sm font-bold break-word">{formatCurrency(dealer.avgOrderValue)}</p>
+                    </div>
+                    <div className="text-center p-3 rounded-lg bg-muted/50">
+                      <p className="text-xs text-muted-foreground mb-1">Frequency</p>
+                      <p className="text-sm font-bold">{dealer.orderFrequency.toFixed(1)}/mo</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ))
+          )}
           
-          {/* Pagination Controls */}
+          {/* Mobile-responsive Pagination Controls */}
           {dealerAnalytics.dealerMetrics.length > itemsPerPage && (
-            <Pagination className="py-4">
-              <PaginationContent>
+            <Pagination className="py-2 sm:py-4">
+              <PaginationContent className="flex-wrap">
                 <PaginationItem>
                   <PaginationPrevious 
                     href="#" 
@@ -597,29 +690,44 @@ export default function DealerAnalyticsPage() {
                       if (currentPage > 1) setCurrentPage(currentPage - 1);
                     }}
                     aria-disabled={currentPage === 1}
-                    className={currentPage === 1 ? "pointer-events-none opacity-50" : ""}
+                    className={`${currentPage === 1 ? "pointer-events-none opacity-50" : ""} mobile-touch-target`}
                   />
                 </PaginationItem>
                 
-                {Array.from({ length: Math.ceil(dealerAnalytics.dealerMetrics.length / itemsPerPage) }).map((_, index) => {
-                  const pageNumber = index + 1;
+                {Array.from({ length: Math.ceil(dealerAnalytics.dealerMetrics.length / itemsPerPage) }).map((_, idx) => {
+                  const pageNumber = idx + 1;
                   const totalPages = Math.ceil(dealerAnalytics.dealerMetrics.length / itemsPerPage);
                   
-                  // Show current page, first, last and nearby pages
-                  if (
+                  // For mobile, show fewer pages
+                  const isMobileVisible = 
                     pageNumber === 1 || 
                     pageNumber === totalPages || 
-                    (pageNumber >= currentPage - 1 && pageNumber <= currentPage + 1)
-                  ) {
+                    pageNumber === currentPage;
+                    
+                  // For desktop, show more pages
+                  const isDesktopVisible =
+                    pageNumber === 1 || 
+                    pageNumber === totalPages || 
+                    (pageNumber >= currentPage - 1 && pageNumber <= currentPage + 1);
+                  
+                  // Mobile-responsive display logic using the responsive hook
+                  const shouldShowOnMobile = isMobile && (pageNumber === 1 || pageNumber === totalPages || pageNumber === currentPage);
+                  const shouldShowOnTablet = isTablet && (pageNumber === 1 || pageNumber === totalPages || 
+                    (pageNumber >= currentPage - 1 && pageNumber <= currentPage + 1));
+                  const shouldShowOnDesktop = isDesktop && (pageNumber === 1 || pageNumber === totalPages || 
+                    (pageNumber >= currentPage - 1 && pageNumber <= currentPage + 1));
+                  
+                  if (shouldShowOnMobile || shouldShowOnTablet || shouldShowOnDesktop) {
                     return (
-                      <PaginationItem key={pageNumber}>
+                      <PaginationItem key={`page-${pageNumber}`} className={isMobile ? "mx-0.5" : "mx-1"}>
                         <PaginationLink 
                           href="#" 
-                          isActive={pageNumber === currentPage}
                           onClick={(e) => {
                             e.preventDefault();
                             setCurrentPage(pageNumber);
                           }}
+                          isActive={pageNumber === currentPage}
+                          className={`mobile-touch-target ${isMobile ? "h-8 w-8 p-0" : ""}`}
                         >
                           {pageNumber}
                         </PaginationLink>
@@ -627,13 +735,27 @@ export default function DealerAnalyticsPage() {
                     );
                   }
                   
-                  // Show ellipsis for gaps in pagination
+                  // Show ellipsis for gaps in pagination, with responsive behavior
+                  const shouldShowDesktopEllipsis = 
+                    (isTablet || isDesktop) &&
+                    ((pageNumber === currentPage - 2 && pageNumber > 2) || 
+                    (pageNumber === currentPage + 2 && pageNumber < totalPages - 1));
+                    
+                  if (shouldShowDesktopEllipsis) {
+                    return (
+                      <PaginationItem key={`ellipsis-${pageNumber}`} className={isMobile ? "mx-0.5" : "mx-1"}>
+                        <PaginationEllipsis className={isMobile ? "h-8 w-8 p-0" : ""} />
+                      </PaginationItem>
+                    );
+                  }
+                  
+                  // Mobile simplified display
                   if (
-                    (pageNumber === currentPage - 2 && pageNumber > 2) || 
-                    (pageNumber === currentPage + 2 && pageNumber < totalPages - 1)
+                    (pageNumber === 2 && currentPage > 3 && pageNumber !== currentPage) ||
+                    (pageNumber === totalPages - 1 && currentPage < totalPages - 2 && pageNumber !== currentPage)
                   ) {
                     return (
-                      <PaginationItem key={`ellipsis-${pageNumber}`}>
+                      <PaginationItem key={`mobile-ellipsis-${pageNumber}`} className="inline-flex xs:inline-flex sm:hidden">
                         <PaginationEllipsis />
                       </PaginationItem>
                     );
@@ -651,7 +773,7 @@ export default function DealerAnalyticsPage() {
                       if (currentPage < totalPages) setCurrentPage(currentPage + 1);
                     }}
                     aria-disabled={currentPage === Math.ceil(dealerAnalytics.dealerMetrics.length / itemsPerPage)}
-                    className={currentPage === Math.ceil(dealerAnalytics.dealerMetrics.length / itemsPerPage) ? "pointer-events-none opacity-50" : ""}
+                    className={`${currentPage === Math.ceil(dealerAnalytics.dealerMetrics.length / itemsPerPage) ? "pointer-events-none opacity-50" : ""} mobile-touch-target`}
                   />
                 </PaginationItem>
               </PaginationContent>
@@ -662,59 +784,90 @@ export default function DealerAnalyticsPage() {
 
       {viewMode === "chart" && (
         <div className="responsive-grid-2">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-responsive-lg">Sales Performance</CardTitle>
-              <CardDescription>Dealer sales comparison</CardDescription>
+          <Card className="overflow-hidden">
+            <CardHeader className="px-3 sm:px-6 py-3 sm:pb-3">
+              <CardTitle className="text-responsive-sm">Sales Performance</CardTitle>
+              <CardDescription className="text-responsive-xs">Dealer sales comparison</CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="chart-container">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={dealerAnalytics.dealerMetrics.slice(0, 15)}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" tick={{ fontSize: 10 }} angle={-45} textAnchor="end" height={80} />
-                    <YAxis tick={{ fontSize: 12 }} tickFormatter={(value) => `₹${(value / 100000).toFixed(0)}L`} />
-                    <Tooltip
-                      formatter={(value: number) => [formatCurrency(value), "Sales"]}
-                      labelStyle={{ fontSize: "12px" }}
-                    />
-                    <Bar dataKey="totalSales" fill="hsl(var(--chart-1))" />
-                  </BarChart>
-                </ResponsiveContainer>
+            <CardContent className="px-2 sm:px-6 pb-3 sm:pb-6">
+              <div className="chart-container" id="dealer-sales-chart">
+                <LazyChartWrapper
+                  data={dealerAnalytics.dealerMetrics.slice(0, 15)}
+                  title="Dealer Sales Comparison"
+                  height={280}
+                  id="sales-chart"
+                  renderChart={({ data, height }) => (
+                    <ResponsiveContainer width="100%" height={height}>
+                      <BarChart data={data} margin={{ top: 5, right: 5, bottom: 65, left: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis 
+                          dataKey="name" 
+                          tick={{ fontSize: 9 }} 
+                          angle={-45} 
+                          textAnchor="end" 
+                          height={80} 
+                          interval={0}
+                        />
+                        <YAxis 
+                          tick={{ fontSize: 10 }} 
+                          tickFormatter={(value) => `₹${(value / 100000).toFixed(0)}L`} 
+                          width={45}
+                        />
+                        <Tooltip
+                          formatter={(value: number) => [formatCurrency(value), "Sales"]}
+                          labelStyle={{ fontSize: "11px" }}
+                          contentStyle={{ fontSize: "11px" }}
+                        />
+                        <Bar dataKey="totalSales" fill="hsl(var(--chart-1))" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                />
               </div>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-responsive-lg">Growth vs Sales</CardTitle>
-              <CardDescription>Performance correlation analysis</CardDescription>
+          <Card className="overflow-hidden">
+            <CardHeader className="px-3 sm:px-6 py-3 sm:pb-3">
+              <CardTitle className="text-responsive-sm">Growth vs Sales</CardTitle>
+              <CardDescription className="text-responsive-xs">Performance correlation analysis</CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="chart-container">
-                <ResponsiveContainer width="100%" height="100%">
-                  <ScatterChart data={dealerAnalytics.dealerMetrics}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis
-                      dataKey="totalSales"
-                      tick={{ fontSize: 12 }}
-                      tickFormatter={(value) => `₹${(value / 100000).toFixed(0)}L`}
-                    />
-                    <YAxis
-                      dataKey="growthRate"
-                      tick={{ fontSize: 12 }}
-                      tickFormatter={(value) => `${value.toFixed(0)}%`}
-                    />
-                    <Tooltip
-                      formatter={(value: number, name: string) => [
-                        name === "totalSales" ? formatCurrency(value) : `${value.toFixed(1)}%`,
-                        name === "totalSales" ? "Sales" : "Growth Rate",
-                      ]}
-                      labelStyle={{ fontSize: "12px" }}
-                    />
-                    <Scatter dataKey="totalSales" fill="hsl(var(--chart-2))" />
-                  </ScatterChart>
-                </ResponsiveContainer>
+            <CardContent className="px-2 sm:px-6 pb-3 sm:pb-6">
+              <div className="chart-container" id="dealer-growth-chart">
+                <LazyChartWrapper
+                  data={dealerAnalytics.dealerMetrics}
+                  title="Sales vs Growth Rate"
+                  height={280}
+                  id="growth-chart"
+                  renderChart={({ data, height }) => (
+                    <ResponsiveContainer width="100%" height={height}>
+                      <ScatterChart data={data} margin={{ top: 5, right: 5, bottom: 5, left: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis
+                          dataKey="totalSales"
+                          tick={{ fontSize: 10 }}
+                          tickFormatter={(value) => `₹${(value / 100000).toFixed(0)}L`}
+                          width={45}
+                        />
+                        <YAxis
+                          dataKey="growthRate"
+                          tick={{ fontSize: 10 }}
+                          tickFormatter={(value) => `${value.toFixed(0)}%`}
+                          width={35}
+                        />
+                        <Tooltip
+                          formatter={(value: number, name: string) => [
+                            name === "totalSales" ? formatCurrency(value) : `${value.toFixed(1)}%`,
+                            name === "totalSales" ? "Sales" : "Growth Rate",
+                          ]}
+                          labelStyle={{ fontSize: "11px" }}
+                          contentStyle={{ fontSize: "11px" }}
+                        />
+                        <Scatter dataKey="totalSales" fill="hsl(var(--chart-2))" />
+                      </ScatterChart>
+                    </ResponsiveContainer>
+                  )}
+                />
               </div>
             </CardContent>
           </Card>
@@ -722,13 +875,13 @@ export default function DealerAnalyticsPage() {
       )}
 
       {viewMode === "comparison" && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-responsive-lg">Tier-wise Comparison</CardTitle>
-            <CardDescription>Performance analysis by dealer tiers</CardDescription>
+        <Card className="overflow-hidden">
+          <CardHeader className="px-3 sm:px-6 py-3 sm:pb-3">
+            <CardTitle className="text-responsive-sm">Tier-wise Comparison</CardTitle>
+            <CardDescription className="text-responsive-xs">Performance analysis by dealer tiers</CardDescription>
           </CardHeader>
-          <CardContent>
-            <div className="space-y-6">
+          <CardContent className="px-2 sm:px-6 pb-3 sm:pb-6">
+            <div className="space-y-4 sm:space-y-6">
               {["Platinum", "Gold", "Silver", "Bronze"].map((tier) => {
                 const tierDealers = dealerAnalytics.dealerMetrics.filter((d) => d.tier === tier)
                 if (tierDealers.length === 0) return null
@@ -738,31 +891,31 @@ export default function DealerAnalyticsPage() {
                 const avgLoyalty = tierDealers.reduce((sum, d) => sum + d.loyaltyScore, 0) / tierDealers.length
 
                 return (
-                  <div key={tier} className="p-4 rounded-lg border bg-card">
-                    <div className="flex items-center justify-between mb-4">
+                  <div key={tier} className="p-3 sm:p-4 rounded-lg border bg-card">
+                    <div className="flex flex-wrap sm:flex-nowrap items-start sm:items-center justify-between gap-2 sm:gap-4 mb-3 sm:mb-4">
                       <div className="flex items-center space-x-2">
                         {getTierIcon(tier)}
-                        <h3 className="text-lg font-semibold">{tier} Tier</h3>
+                        <h3 className="text-base sm:text-lg font-semibold">{tier} Tier</h3>
                         <Badge className={getTierColor(tier)}>{tierDealers.length} dealers</Badge>
                       </div>
-                      <div className="text-right">
-                        <p className="text-sm text-muted-foreground">Avg Performance</p>
-                        <p className="text-lg font-bold break-word">{formatCurrency(avgSales)}</p>
+                      <div className="text-right w-full sm:w-auto">
+                        <p className="text-xs sm:text-sm text-muted-foreground">Avg Performance</p>
+                        <p className="text-base sm:text-lg font-bold break-word">{formatCurrency(avgSales)}</p>
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-                      <div className="text-center p-3 rounded-lg bg-muted/50">
+                    <div className="grid grid-cols-1 xs:grid-cols-3 gap-2 sm:gap-4 mb-3 sm:mb-4">
+                      <div className="text-center p-2 sm:p-3 rounded-lg bg-muted/50">
                         <p className="text-xs text-muted-foreground mb-1">Avg Growth</p>
-                        <p className="text-sm font-bold">{avgGrowth.toFixed(1)}%</p>
+                        <p className="text-xs sm:text-sm font-bold">{avgGrowth.toFixed(1)}%</p>
                       </div>
-                      <div className="text-center p-3 rounded-lg bg-muted/50">
+                      <div className="text-center p-2 sm:p-3 rounded-lg bg-muted/50">
                         <p className="text-xs text-muted-foreground mb-1">Avg Loyalty</p>
-                        <p className="text-sm font-bold">{avgLoyalty.toFixed(0)}</p>
+                        <p className="text-xs sm:text-sm font-bold">{avgLoyalty.toFixed(0)}</p>
                       </div>
-                      <div className="text-center p-3 rounded-lg bg-muted/50">
+                      <div className="text-center p-2 sm:p-3 rounded-lg bg-muted/50">
                         <p className="text-xs text-muted-foreground mb-1">Market Share</p>
-                        <p className="text-sm font-bold">
+                        <p className="text-xs sm:text-sm font-bold">
                           {(
                             (tierDealers.reduce((sum, d) => sum + d.totalSales, 0) /
                               dealerAnalytics.dealerMetrics.reduce((sum, d) => sum + d.totalSales, 0)) *
@@ -774,30 +927,30 @@ export default function DealerAnalyticsPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <h4 className="text-sm font-medium">Top Performers in {tier}</h4>
+                      <h4 className="text-xs sm:text-sm font-medium">Top Performers in {tier}</h4>
                       <div className="space-y-1">
                         {tierDealers.slice(0, 3).map((dealer, index) => (
-                          <div key={dealer.name} className="flex items-center justify-between p-2 rounded bg-muted/30">
+                          <div key={dealer.name} className="flex items-center justify-between p-1.5 sm:p-2 rounded bg-muted/30">
                             <div className="flex items-center space-x-2 min-w-0 flex-1">
-                              <span className="flex-shrink-0 w-5 h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">
+                              <span className="flex-shrink-0 w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">
                                 {index + 1}
                               </span>
-                              <span className="text-sm font-medium truncate" title={dealer.name}>
+                              <span className="text-xs sm:text-sm font-medium truncate" title={dealer.name}>
                                 {dealer.name}
                               </span>
                             </div>
-                            <span className="text-sm font-bold break-word">{formatCurrency(dealer.totalSales)}</span>
+                            <span className="text-xs sm:text-sm font-bold break-word">{formatCurrency(dealer.totalSales)}</span>
                           </div>
                         ))}
                       </div>
                     </div>
                   </div>
-                )
+                );
               })}
             </div>
           </CardContent>
         </Card>
       )}
     </div>
-  )
+  );
 }

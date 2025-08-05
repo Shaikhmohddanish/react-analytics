@@ -13,6 +13,7 @@ import {
   Target,
   Zap,
   Brain,
+  BarChart,
 } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
@@ -38,6 +39,16 @@ const mainItems = [
     title: "Dealer Dashboard",
     url: "/dealer-dashboard",
     icon: Users,
+  },
+  {
+    title: "Dealer Performance",
+    url: "/dealer-performance",
+    icon: TrendingUp,
+  },
+  {
+    title: "Product Trends",
+    url: "/product-trends",
+    icon: LineChart,
   },
   {
     title: "Dealer Analytics",
@@ -75,6 +86,11 @@ const advancedItems = [
 ]
 
 const visualizationItems = [
+  {
+    title: "Monthly Breakdown",
+    url: "/monthly-breakdown",
+    icon: BarChart,
+  },
   {
     title: "Weekly Flow",
     url: "/weekly-flow",
