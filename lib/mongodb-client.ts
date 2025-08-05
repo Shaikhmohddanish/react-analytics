@@ -110,12 +110,18 @@ export async function getDeliveryData(fileId?: string): Promise<DeliveryData[]> 
       ? `/api/mongodb/get-delivery-data?fileId=${encodeURIComponent(fileId)}`
       : '/api/mongodb/get-delivery-data';
       
+    console.log("Fetching delivery data from:", url);
     const response = await fetch(url);
     const result: MongoDBResponse = await response.json();
     
     if (!result.success) {
+      console.error("Failed to fetch delivery data:", result.error);
       throw new Error(result.error || 'Failed to fetch delivery data');
     }
+    
+    // Log record count
+    const recordCount = Array.isArray(result.data) ? result.data.length : 0;
+    console.log(`Retrieved ${recordCount} delivery records from MongoDB`);
     
     // Ensure the data is properly typed
     if (Array.isArray(result.data)) {
@@ -126,6 +132,7 @@ export async function getDeliveryData(fileId?: string): Promise<DeliveryData[]> 
       );
     }
     
+    console.warn("No valid data returned from MongoDB");
     return [];
   } catch (error) {
     console.error('Error fetching delivery data:', error);

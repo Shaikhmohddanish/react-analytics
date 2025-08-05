@@ -11,6 +11,10 @@ import { useData } from "@/contexts/data-context"
 import { useFilters } from "@/contexts/filter-context"
 import { ExportButton } from "@/components/export-button"
 import useResponsive from "@/hooks/use-responsive"
+import { getCSVFileEntries } from "@/lib/mongodb-client"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { AlertCircle, RefreshCw } from "lucide-react"
+import { useToast } from "@/hooks/use-toast"
 import {
   Search,
   Filter,
@@ -58,13 +62,39 @@ import { paginateData } from "@/lib/data-utils"
 export default function DealerAnalyticsPage() {
   // Get responsive screen size
   const { isMobile, isTablet, isDesktop } = useResponsive();
-  const { data, loading } = useData()
+  const { data, loading, refreshData } = useData()
   const { filteredData, isFiltering, filterProgress } = useFilters()
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedTier, setSelectedTier] = useState<string>("all")
   const [dateRange, setDateRange] = useState<string>("all")
   const [viewMode, setViewMode] = useState("grid")
   const [sortBy, setSortBy] = useState<"sales" | "growth" | "loyalty" | "orders">("sales")
+  const [currentFile, setCurrentFile] = useState<any>(null)
+  const { toast } = useToast()
+  
+  // Get current file info
+  useEffect(() => {
+    const fetchCurrentFile = async () => {
+      try {
+        const files = await getCSVFileEntries();
+        if (files && files.length > 0) {
+          // Sort by import date (most recent first)
+          const sortedFiles = files.sort((a, b) => {
+            const dateA = new Date(a.importDate || 0);
+            const dateB = new Date(b.importDate || 0);
+            return dateB.getTime() - dateA.getTime();
+          });
+          
+          setCurrentFile(sortedFiles[0]);
+          console.log("Current file:", sortedFiles[0]);
+        }
+      } catch (error) {
+        console.error("Error fetching current file:", error);
+      }
+    };
+    
+    fetchCurrentFile();
+  }, []);
   
   // Pagination state - managed with optimized pagination function
   const [currentPage, setCurrentPage] = useState(1)
@@ -355,6 +385,35 @@ export default function DealerAnalyticsPage() {
 
   return (
     <div className="space-y-4 sm:space-y-6">
+      {/* Current file info */}
+      {currentFile && (
+        <Alert className="bg-blue-50 border-blue-200 dark:bg-blue-950 dark:border-blue-800">
+          <AlertCircle className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+          <AlertTitle className="text-blue-800 dark:text-blue-300">Current File: {currentFile.fileName}</AlertTitle>
+          <AlertDescription className="text-blue-700 dark:text-blue-400 flex items-center justify-between">
+            <span>
+              Showing {data.length.toLocaleString()} records from file uploaded on{" "}
+              {new Date(currentFile.importDate).toLocaleDateString()}
+            </span>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="ml-2 text-xs"
+              onClick={() => {
+                refreshData(true);
+                toast({
+                  title: "Data refreshed",
+                  description: "Data has been refreshed from the current file"
+                });
+              }}
+            >
+              <RefreshCw className="h-3 w-3 mr-1" />
+              Refresh
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+      
       {/* Advanced Filters and Controls */}
       <Card>
         <CardHeader>

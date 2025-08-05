@@ -152,9 +152,19 @@ export async function loadAndProcessData(forceRefresh = false): Promise<Processe
   try {
     // Check cache first if not forcing refresh
     const currentTime = Date.now();
-    if (!forceRefresh && 
+    const shouldUseCache = !forceRefresh && 
         dataCache.data.length > 0 && 
-        currentTime - dataCache.timestamp < CACHE_EXPIRY_TIME) {
+        currentTime - dataCache.timestamp < CACHE_EXPIRY_TIME;
+    
+    console.log("Data loading status:", {
+      useCache: shouldUseCache,
+      cacheSize: dataCache.data.length,
+      cacheAge: `${Math.round((currentTime - dataCache.timestamp) / 1000)} seconds`,
+      cacheExpiry: `${Math.round(CACHE_EXPIRY_TIME / 1000)} seconds`,
+      forceRefresh
+    });
+    
+    if (shouldUseCache) {
       console.log(`Using cached data (${dataCache.data.length} records)`);
       return dataCache.data;
     }

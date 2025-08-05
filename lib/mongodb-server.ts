@@ -161,6 +161,7 @@ export async function storeCSVFileInfoServer(fileInfo: {
     const collection = db.collection(csvFilesCollection);
     console.log(`Inserting into ${csvFilesCollection}:`, fileInfo.fileName);
     
+    // Add importDate to ensure we can find the most recent file
     const result = await collection.insertOne({
       ...fileInfo,
       importDate: new Date()
@@ -377,15 +378,32 @@ export async function getDeliveryDataServer(fileId?: string) {
   try {
     const db = await connectToDatabase();
     const collection = db.collection(dataCollection);
+    const csvFilesCol = db.collection(csvFilesCollection);
     
     let query = {};
     
     if (fileId) {
+      console.log("Using provided fileId for query:", fileId);
       try {
         query = { fileId: new ObjectId(fileId) };
       } catch (e) {
         // If the fileId is not a valid ObjectId, use it as a string
         query = { fileId: fileId };
+      }
+    } else {
+      // If no fileId provided, get the most recent file
+      console.log("No fileId provided, finding most recent file");
+      const recentFiles = await csvFilesCol.find()
+        .sort({ importDate: -1 })
+        .limit(1)
+        .toArray();
+      
+      if (recentFiles && recentFiles.length > 0) {
+        const mostRecentFile = recentFiles[0];
+        console.log("Found most recent file:", mostRecentFile._id.toString());
+        query = { fileId: mostRecentFile._id };
+      } else {
+        console.log("No files found in database");
       }
     }
     

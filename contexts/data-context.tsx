@@ -10,7 +10,7 @@ interface DataContextType {
   data: ProcessedData[]
   loading: boolean
   error: string | null
-  refreshData: () => Promise<void>
+  refreshData: (forceRefresh?: boolean) => Promise<void>
   importData: (newData: ProcessedData[], mode: "replace" | "append") => void
   lastUpdated: Date | null
   stats: {
@@ -161,10 +161,15 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     }
   }, [toast, processDataChunks])
 
-  const refreshData = useCallback(async () => {
+  const refreshData = useCallback(async (forceRefresh = false) => {
+    console.log(`Refreshing data (force: ${forceRefresh})`);
     // Pass true to force refresh and bypass cache
-    await loadData(true)
-  }, [loadData])
+    await loadData(forceRefresh);
+    toast({
+      title: "Data refreshed",
+      description: "The latest data has been loaded"
+    });
+  }, [loadData, toast])
 
   const importData = useCallback(
     (newData: ProcessedData[], mode: "replace" | "append") => {
@@ -204,9 +209,14 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
+  // First load of data
   useEffect(() => {
-    loadData()
-  }, [loadData])
+    loadData();
+    toast({
+      title: "Loading data",
+      description: "Loading data from the most recent file"
+    });
+  }, [loadData, toast])
 
   const contextValue = useMemo(() => ({
     data,
