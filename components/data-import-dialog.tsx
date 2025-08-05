@@ -30,6 +30,7 @@ import Papa from "papaparse"
 import { uploadCSVToCloudinary, getCloudinaryCSVFiles, downloadCSVFromCloudinary } from "@/lib/cloudinary"
 import { storeCSVFileInfo, storeDeliveryData, getCSVFileEntries } from "@/lib/mongodb-client"
 import { storeFileUploadHistory } from "@/lib/file-history-client"
+import { validateCSV, fixCSVFormat } from "@/lib/csv-utils"
 
 interface DataImportDialogProps {
   open: boolean
@@ -83,33 +84,51 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
     }
   }
 
-  const previewFile = (file: File) => {
-    Papa.parse(file, {
-      header: true,
-      skipEmptyLines: true,
-      preview: 5, // Preview first 5 rows
-      transformHeader: (header) => header.trim(),
-      delimitersToGuess: [',', '\t', ';', '|'], // Try to guess delimiter
-      complete: (results) => {
-        console.log("CSV Preview Results:", results);
-        console.log("Delimiter detected:", results.meta.delimiter);
-        console.log("Sample data rows:", results.data.slice(0, 2));
+  const previewFile = async (file: File) => {
+    try {
+      // Validate the CSV file first
+      const validation = await validateCSV(file);
+      
+      if (!validation.valid) {
+        console.error("CSV validation error:", validation.message);
         
-        if (results.meta.fields) {
-          logAvailableColumns(results.meta.fields);
+        // If we have some data despite validation issues, show it anyway
+        if (validation.data && validation.data.length > 0) {
+          console.log("Using partial data for preview despite validation issues");
+          setPreviewData(validation.data.slice(0, 5));
+          if (validation.meta?.fields) {
+            validateColumns(validation.meta.fields);
+            logAvailableColumns(validation.meta.fields);
+          }
+        } else {
+          // Show error toast if no usable data
+          toast({
+            title: "CSV Validation Error",
+            description: validation.message,
+            variant: "destructive",
+          });
+          return;
         }
-        setPreviewData(results.data)
-        validateColumns(results.meta.fields || [])
-      },
-      error: (error: Error) => {
-        console.error("CSV parsing error:", error);
-        toast({
-          title: "File parsing error",
-          description: error.message,
-          variant: "destructive",
-        })
-      },
-    })
+      } else {
+        // File is valid, set the preview data
+        setPreviewData(validation.data?.slice(0, 5) || []);
+        if (validation.meta?.fields) {
+          validateColumns(validation.meta.fields);
+          logAvailableColumns(validation.meta.fields);
+        }
+        
+        console.log("CSV Preview Results:", validation);
+        console.log("Delimiter detected:", validation.meta?.delimiter);
+        console.log("Sample data rows:", validation.data?.slice(0, 2));
+      }
+    } catch (error) {
+      console.error("Error processing file:", error);
+      toast({
+        title: "File processing error",
+        description: error instanceof Error ? error.message : "Failed to process file",
+        variant: "destructive",
+      });
+    }
   }
 
   const validateColumns = (columns: string[]) => {
@@ -131,9 +150,6 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
       setValidationErrors([]);  // Clear validation errors if columns are valid
     }
   }
-  
-  // Updated previewFile to force parsing all lines including empty ones and log raw data
-  // Remove duplicate previewFile function
   
   // Load Cloudinary files when dialog opens
   useEffect(() => {
@@ -249,7 +265,9 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
               description: `Imported from Cloudinary on ${new Date().toLocaleDateString()}`,
               cloudinaryPublicId: publicId,
               cloudinaryUrl: publicId,
-              recordCount: processedData.length
+              recordCount: processedData.length,
+              uploadDate: new Date(),
+              lastAccessDate: new Date()
             });
             
             // Store the processed data in MongoDB
@@ -327,87 +345,107 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
     
     console.log("Non-empty rows:", nonEmptyRows.length);
     
-  return nonEmptyRows
+    return nonEmptyRows
       .filter((row: any) => {
         // More flexible check - check if the row has any data
         if (!row || Object.keys(row).length === 0) {
           return false;
         }
         
-        // Check if row has at least some meaningful fields by looking at all keys
-        const hasAnyDateField = Object.keys(row).some(k => 
-          k.toLowerCase().includes('date') || k.toLowerCase().includes('time') || k.toLowerCase().includes('day')
-        );
-        
-        const hasAnyItemField = Object.keys(row).some(k => 
-          k.toLowerCase().includes('item') || k.toLowerCase().includes('product') || 
-          k.toLowerCase().includes('descrip') || k.toLowerCase().includes('name')
-        );
-        
-        const hasAnyTotalField = Object.keys(row).some(k => 
-          k.toLowerCase().includes('total') || k.toLowerCase().includes('amount') || 
-          k.toLowerCase().includes('price') || k.toLowerCase().includes('value')
-        );
-        
-        // More lenient check - needs just 2 of the 3 required types of fields
-        const hasRequiredFields = (hasAnyDateField && hasAnyItemField) || 
-                                 (hasAnyDateField && hasAnyTotalField) || 
-                                 (hasAnyItemField && hasAnyTotalField);
-          
-        if (!hasRequiredFields) {
-          console.log("Filtering out row due to missing fields; keys present:", Object.keys(row), "Row content:", row);
+        // Log available columns for the first few rows to help with debugging
+        if (nonEmptyRows.indexOf(row) < 3) {
+          console.log("Available columns for row:", Object.keys(row));
         }
         
-        return hasRequiredFields;
+        return true; // Keep all non-empty rows for processing
       })
       .map((row: any) => {
         try {
           const today = new Date();
           
-          // Find fields using more flexible matching
-          const dateField: string | undefined = Object.keys(row).find(k => 
-            k.toLowerCase().includes('date') || k.toLowerCase().includes('time') || k.toLowerCase().includes('day')
-          );
+          // IMPROVED COLUMN DETECTION LOGIC
+          // Improved date field detection – look for "date" but exclude "id" or "number"
+          const dateField = Object.keys(row).find(k => {
+            const kl = k.toLowerCase();
+            return kl.includes('date') && !kl.includes('id') && !kl.includes('number');
+          });
+
+          // Improved item field detection – prefer "item"/"product"/"description" only
+          const itemField = Object.keys(row).find(k => {
+            const kl = k.toLowerCase();
+            return kl.includes('item') || kl.includes('product') || kl.includes('descrip');
+          });
+
+          // Improved total field detection – prefer "item total", otherwise "total" but not "discount"
+          const totalField = Object.keys(row).find(k => {
+            const kl = k.toLowerCase();
+            return kl.includes('item total') ||
+                   (kl.includes('total') && !kl.includes('discount') && !kl.includes('sub') && !kl.includes('entity'));
+          });
+
+          // Improved customer field detection – only match "customer"/"client"/"buyer"/"company"
+          const customerField = Object.keys(row).find(k => {
+            const kl = k.toLowerCase();
+            return kl.includes('customer') || kl.includes('client') || kl.includes('buyer') || kl.includes('company');
+          });
+
+          // Improved challan field detection – prefer "challan number" over "id"
+          const challanField = Object.keys(row).find(k => {
+            const kl = k.toLowerCase();
+            return kl.includes('challan number') ||
+                   (kl.includes('number') && kl.includes('challan')) ||
+                   kl.includes('invoice number');
+          });
+
+          // Direct access to exact column names when available
+          const deliveryChallanId = row['Delivery Challan ID']?.toString().trim() || '';
+          const exactChallanDate = row['Challan Date'] ? new Date(row['Challan Date']) : null;
+          const deliveryChallanNum = row['Delivery Challan Number']?.toString().trim() || '';
+          const exactCustomerName = row['Customer Name']?.toString().trim() || '';
+          const exactItemName = row['Item Name']?.toString().trim() || '';
+          const exactItemTotal = row['Item Total'] ? 
+            parseFloat(String(row['Item Total']).replace(/[₹,]/g, '')) || 0 : null;
           
-          const itemField: string | undefined = Object.keys(row).find(k => 
-            k.toLowerCase().includes('item') || k.toLowerCase().includes('product') || 
-            k.toLowerCase().includes('descrip') || k.toLowerCase().includes('name')
-          );
+          // Log chosen fields for debugging
+          if (nonEmptyRows.indexOf(row) < 3) {
+            console.log("Selected fields:", {
+              dateField,
+              itemField, 
+              totalField,
+              customerField,
+              challanField,
+              hasExactFields: {
+                challanDate: !!exactChallanDate,
+                customerName: !!exactCustomerName,
+                itemName: !!exactItemName,
+                itemTotal: exactItemTotal !== null
+              }
+            });
+          }
+
+          // Extract values with fallbacks, preferring exact matches when available
+          const rawTotal = exactItemTotal !== null ? exactItemTotal : 
+                          (totalField ? row[totalField] : "0");
           
-          const totalField: string | undefined = Object.keys(row).find(k => 
-            k.toLowerCase().includes('total') || k.toLowerCase().includes('amount') || 
-            k.toLowerCase().includes('price') || k.toLowerCase().includes('value')
-          );
-          
-          const customerField: string | undefined = Object.keys(row).find(k => 
-            k.toLowerCase().includes('customer') || k.toLowerCase().includes('client') || 
-            k.toLowerCase().includes('buyer') || k.toLowerCase().includes('company')
-          );
-          
-          const challanField: string | undefined = Object.keys(row).find(k => 
-            k.toLowerCase().includes('challan') || k.toLowerCase().includes('number') || 
-            k.toLowerCase().includes('invoice') || k.toLowerCase().includes('id')
-          );
-          
-          // Extract values with fallbacks
-          const rawTotal = totalField ? row[totalField] : "0";
           const totalValue = typeof rawTotal === 'number' 
             ? rawTotal 
-            : parseFloat((rawTotal + "").replace(/[^\d.-]/g, "")) || 0;
+            : parseFloat(String(rawTotal).replace(/[₹,]/g, "")) || 0;
             
           // Get date value
           let challanDate = today;
-          if (dateField && row[dateField]) {
+          if (exactChallanDate && !isNaN(exactChallanDate.getTime())) {
+            challanDate = exactChallanDate;
+          } else if (dateField && row[dateField]) {
             const parsedDate = new Date(row[dateField]);
             if (!isNaN(parsedDate.getTime())) {
               challanDate = parsedDate;
             }
           }
           
-          // Extract values safely
-          const itemName = itemField ? row[itemField] : "Unnamed Item";
-          const customerName = customerField ? row[customerField] : "Unknown Customer";
-          const challanNumber = challanField ? row[challanField] : `DC-${Date.now()}`;
+          // Extract values safely, preferring exact column names
+          const itemName = exactItemName || (itemField ? row[itemField] : "Unnamed Item");
+          const customerName = exactCustomerName || (customerField ? row[customerField] : "Unknown Customer");
+          const challanNumber = deliveryChallanNum || (challanField ? row[challanField] : `DC-${Date.now()}`);
           const itemNameCleaned = (itemName || "").toString().toLowerCase();
           
           // Category mapping (simplified version)
@@ -452,11 +490,12 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
           
           return {
             ...row,
-            "Challan Date": dateField ? row[dateField] : today.toISOString().split('T')[0],
-            "Item Name": itemName,
-            "Item Total": rawTotal,
-            "Customer Name": customerName,
-            "Delivery Challan Number": challanNumber,
+            "Challan Date": row['Challan Date'] || (dateField ? row[dateField] : today.toISOString().split('T')[0]),
+            "Item Name": row['Item Name'] || itemName,
+            "Item Total": row['Item Total'] || rawTotal,
+            "Customer Name": row['Customer Name'] || customerName,
+            "Delivery Challan Number": row['Delivery Challan Number'] || challanNumber,
+            "Delivery Challan ID": row['Delivery Challan ID'] || deliveryChallanId,
             challanDate,
             itemTotal: totalValue,
             itemNameCleaned,
@@ -477,10 +516,10 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
   };
 
   const handleImport = async () => {
-    if (!file) return
+    if (!file) return;
 
-    setImporting(true)
-    setProgress(0)
+    setImporting(true);
+    setProgress(0);
 
     try {
       let cloudinaryResult = null;
@@ -531,8 +570,47 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
 
       console.log("Continue with local parsing");
       
-      // Continue with local parsing
-      Papa.parse(file, {
+      // Read the file with a FileReader to handle potential encoding issues
+      const readFile = () => {
+        return new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          
+          reader.onload = (e) => {
+            if (!e.target || !e.target.result) {
+              reject(new Error("Failed to read file content"));
+              return;
+            }
+            
+            let csvContent = e.target.result.toString();
+            // Remove BOM character if present (common in Excel CSV exports)
+            if (csvContent.charCodeAt(0) === 0xFEFF) {
+              console.log("Removing BOM character from CSV file");
+              csvContent = csvContent.slice(1);
+            }
+            
+            // Try to auto-detect and normalize line endings
+            if (!csvContent.includes("\r\n") && csvContent.includes("\n")) {
+              console.log("Converting Unix line endings to Windows line endings");
+              csvContent = csvContent.replace(/\n/g, "\r\n");
+            }
+            
+            resolve(csvContent);
+          };
+          
+          reader.onerror = () => {
+            reject(new Error("Error reading file"));
+          };
+          
+          reader.readAsText(file);
+        });
+      };
+      
+      // Read file and get content
+      const csvContent = await readFile();
+      console.log("File content begins with:", csvContent.substring(0, 200));
+      
+      // Now parse the content with Papa
+      Papa.parse(csvContent, {
         header: true,
         skipEmptyLines: true,
         delimiter: "",  // Auto-detect delimiter
@@ -542,8 +620,8 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
         transformHeader: (header: string) => header.trim(),
         step: (results: Papa.ParseStepResult<any>, parser: any) => {
           // Update progress during parsing
-          const progress = Math.round((results.meta.cursor / file.size) * 100)
-          setProgress(Math.min(80, 30 + progress * 0.5)); // Scale to leave room for upload progress
+          const progress = Math.round(30 + (results.meta.cursor / csvContent.length) * 50);
+          setProgress(Math.min(80, progress)); // Scale to leave room for upload progress
           
           // Log steps for debugging
           if (results.meta.cursor < 1000) {
@@ -553,252 +631,23 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
         complete: async (results: Papa.ParseResult<any>) => {
           try {
             if (results.errors.length > 0) {
-              console.warn("CSV parsing warnings:", results.errors)
+              console.warn("CSV parsing warnings:", results.errors);
             }
   
             // Debug what data we're working with
-          console.log("Data before processing:", results.data.slice(0, 3));
-          console.log("Available columns:", results.meta.fields);
-          
-          // Use a more flexible approach for column matching
-          let processedData = results.data
-              .filter((row: any) => {
-                // Ensure row has some data
-                if (!row || Object.keys(row).length === 0) return false;
-                
-                // Find date, item, total and customer fields with flexible matching
-                const dateField = Object.keys(row).find(k => 
-                  k.toLowerCase().includes('date') || k.toLowerCase().includes('challan')
-                );
-                const itemField = Object.keys(row).find(k => 
-                  k.toLowerCase().includes('item') || k.toLowerCase().includes('product') || k.toLowerCase().includes('description')
-                );
-                const totalField = Object.keys(row).find(k => 
-                  k.toLowerCase().includes('total') || k.toLowerCase().includes('amount') || k.toLowerCase().includes('price')
-                );
-                const customerField = Object.keys(row).find(k => 
-                  k.toLowerCase().includes('customer') || k.toLowerCase().includes('client') || k.toLowerCase().includes('name')
-                );
-                
-                // For debugging
-                if (!dateField || !itemField || !totalField || !customerField) {
-                  console.log("Filtering out row due to missing fields:", {
-                    row, 
-                    hasDate: !!dateField, 
-                    hasItem: !!itemField, 
-                    hasTotal: !!totalField, 
-                    hasCustomer: !!customerField
-                  });
-                }
-                
-                return !!(dateField && itemField && totalField && customerField);
-              })
-              .map((row: any) => {
-                try {
-                  // Find the date field using flexible matching
-                  const dateField = Object.keys(row).find(k => 
-                    k.toLowerCase().includes('date') || k.toLowerCase().includes('challan')
-                  ) || "Challan Date";
-                  
-                  // Parse date
-                  const challanDate = new Date(row[dateField])
-                  if (isNaN(challanDate.getTime())) {
-                    console.warn(`Invalid date: ${row[dateField]} for row:`, row);
-                    // Set a default date instead of throwing
-                    return null;
-                  }
+            console.log("Data before processing:", results.data.slice(0, 3));
+            console.log("Available columns:", results.meta.fields);
+            
+            // Use our improved parsing logic
+            const processedData = processParseResults(results);
   
-                  // Find field names using flexible matching
-                  const totalField = Object.keys(row).find(k => 
-                    k.toLowerCase().includes('total') || k.toLowerCase().includes('amount') || k.toLowerCase().includes('price')
-                  ) || "Item Total";
-                  
-                  const itemField = Object.keys(row).find(k => 
-                    k.toLowerCase().includes('item') || k.toLowerCase().includes('product') || k.toLowerCase().includes('description')
-                  ) || "Item Name";
-                  
-                  const customerField = Object.keys(row).find(k => 
-                    k.toLowerCase().includes('customer') || k.toLowerCase().includes('client') || k.toLowerCase().includes('name')
-                  ) || "Customer Name";
-                  
-                  const challanField = Object.keys(row).find(k => 
-                    k.toLowerCase().includes('challan') && k.toLowerCase().includes('number')
-                  ) || "Delivery Challan Number";
-                  
-                  // Clean and parse item total
-                  const itemTotalStr = (row[totalField] || "0")
-                    .toString()
-                    .replace(/[₹,\s]/g, "")
-                    .replace(/[^\d.-]/g, "")
-  
-                  const itemTotal = Number.parseFloat(itemTotalStr) || 0
-  
-                  // Clean item name for category mapping
-                  const itemNameCleaned = (row[itemField] || "").trim().toLowerCase()
-  
-                  // Category mapping (simplified version)
-                  const categoryMap: Record<string, string[]> = {
-                    "Bio-Fertilizers": [
-                      "consortia",
-                      "trichoderma",
-                      "psb",
-                      "azotobacter",
-                      "metarhizium",
-                      "psudomonas",
-                      "rhizo",
-                    ],
-                    Micronutrients: ["nutrisac", "micromax", "ferrous", "magnesium", "orient", "diamond"],
-                    "Chelated Micronutrients": ["iron man", "micro man", "eddha"],
-                    "Bio-Stimulants": [
-                      "titanic",
-                      "jeeto",
-                      "flora",
-                      "humic",
-                      "pickup",
-                      "boomer",
-                      "bingo",
-                      "rainbow",
-                      "zumbaa",
-                      "turma",
-                      "simba",
-                      "captain",
-                      "ferrari",
-                      "fountain",
-                    ],
-                    "Other Bulk Orders": ["biomass", "nandi", "calcimag"],
-                  }
-  
-                  let category = "Uncategorized"
-                  for (const [cat, keywords] of Object.entries(categoryMap)) {
-                    if (keywords.some((keyword) => itemNameCleaned.includes(keyword))) {
-                      category = cat
-                      break
-                    }
-                  }
-  
-                  // Create a standardized object with our expected fields
-                  return {
-                    ...row,
-                    "Challan Date": row[dateField] || row["Challan Date"],
-                    "Item Name": row[itemField] || row["Item Name"],
-                    "Item Total": row[totalField] || row["Item Total"],
-                    "Customer Name": row[customerField] || row["Customer Name"],
-                    "Delivery Challan Number": row[challanField] || row["Delivery Challan Number"] || "Unknown",
-                    challanDate,
-                    itemNameCleaned,
-                    category,
-                    month: challanDate.toLocaleDateString("en-US", {
-                      month: "long",
-                      year: "numeric",
-                    }),
-                    year: challanDate.getFullYear(),
-                    monthNum: challanDate.getMonth() + 1,
-                    itemTotal,
-                  }
-                } catch (error) {
-                  console.warn("Error processing row:", row, error)
-                  return null
-                }
-              })
-              .filter((row): row is any => row !== null)
-  
-            setProgress(90)
+            setProgress(90);
   
             // Log how many rows were processed
             console.log(`Processed ${processedData.length} rows out of ${results.data.length} total rows`);
   
-            if (processedData.length === 0 && results.data.length > 0) {
-              // If we have data but couldn't process any of it, try a fallback approach
-              console.error("Filtered data is empty. Original data:", results.data.slice(0, 5));
-              console.log("Attempting fallback processing method...");
-              
-              // Fallback: Just use the raw data with minimal validation
-              const fallbackData = results.data
-                .filter(row => row && Object.keys(row).length > 0)
-                .map((row: any, index: number) => {
-                  // Create basic required fields for MongoDB storage
-                  const today = new Date();
-                  
-                  // Find the best fields available using a more aggressive approach
-                  const bestDateField: string | undefined = Object.keys(row).find(k => 
-                    k.toLowerCase().includes('date') || k.toLowerCase().includes('time') || k.toLowerCase().includes('day')
-                  );
-                  
-                  const bestItemField: string | undefined = Object.keys(row).find(k => 
-                    k.toLowerCase().includes('item') || k.toLowerCase().includes('product') || 
-                    k.toLowerCase().includes('descrip') || k.toLowerCase().includes('name')
-                  );
-                  
-                  const bestAmountField: string | undefined = Object.keys(row).find(k => 
-                    k.toLowerCase().includes('total') || k.toLowerCase().includes('amount') || 
-                    k.toLowerCase().includes('price') || k.toLowerCase().includes('value') || 
-                    k.toLowerCase().includes('sum')
-                  );
-                  
-                  const bestCustomerField: string | undefined = Object.keys(row).find(k => 
-                    k.toLowerCase().includes('customer') || k.toLowerCase().includes('client') || 
-                    k.toLowerCase().includes('buyer') || k.toLowerCase().includes('name') || 
-                    k.toLowerCase().includes('company')
-                  );
-
-                  const bestChallanField: string | undefined = Object.keys(row).find(k => 
-                    k.toLowerCase().includes('challan') || k.toLowerCase().includes('number') || 
-                    k.toLowerCase().includes('id') || k.toLowerCase().includes('invoice')
-                  );
-                  
-                  // Try to parse a date value or use current date
-                  let challanDate = today;
-                  if (bestDateField && row[bestDateField]) {
-                    const parsedDate = new Date(row[bestDateField]);
-                    if (!isNaN(parsedDate.getTime())) {
-                      challanDate = parsedDate;
-                    }
-                  }
-                  
-                  // Try to extract a numeric value for item total
-                  let itemTotal = 0;
-                  if (bestAmountField && row[bestAmountField]) {
-                    const amountStr = (row[bestAmountField] + "").replace(/[^\d.-]/g, "");
-                    itemTotal = parseFloat(amountStr) || 0;
-                  }
-                  
-                  const itemName = bestItemField ? (row[bestItemField] || `Item ${index + 1}`) : `Item ${index + 1}`;
-                  const customerName = bestCustomerField ? (row[bestCustomerField] || "Unknown Customer") : "Unknown Customer";
-                  const challanNumber = bestChallanField ? (row[bestChallanField] || `DC-${Date.now()}-${index}`) : `DC-${Date.now()}-${index}`;
-                  const dateString = bestDateField ? (row[bestDateField] || today.toISOString().split('T')[0]) : today.toISOString().split('T')[0];
-                  const totalString = bestAmountField ? (row[bestAmountField] || "0") : "0";
-                  
-                  return {
-                    ...row, // Keep all original fields
-                    
-                    // Add standardized fields
-                    "Challan Date": dateString,
-                    "Item Name": itemName,
-                    "Item Total": totalString,
-                    "Customer Name": customerName,
-                    "Delivery Challan Number": challanNumber,
-                    
-                    // Add processed fields
-                    challanDate,
-                    itemTotal,
-                    itemNameCleaned: itemName.toString().toLowerCase(),
-                    category: "Uncategorized",
-                    month: challanDate.toLocaleDateString("en-US", {
-                      month: "long",
-                      year: "numeric",
-                    }),
-                    year: challanDate.getFullYear(),
-                    monthNum: challanDate.getMonth() + 1
-                  };
-                });
-              
-              processedData = fallbackData;
-              
-              console.log("Fallback processing created", processedData.length, "records");
-            }
-            
             if (processedData.length === 0) {
-              throw new Error("No valid data could be extracted from the CSV file. The file appears to be empty or in an unrecognized format.")
+              throw new Error("No valid data could be extracted from the CSV file. The file appears to be empty or in an unrecognized format.");
             }
             
             // Store CSV file metadata in MongoDB
@@ -810,7 +659,9 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
                 description: `Imported on ${new Date().toLocaleDateString()}`,
                 cloudinaryPublicId: cloudinaryResult?.public_id || null,
                 cloudinaryUrl: cloudinaryResult?.secure_url || null,
-                recordCount: processedData.length
+                recordCount: processedData.length,
+                uploadDate: new Date(),
+                lastAccessDate: new Date()
               });
               console.log("CSV file metadata stored successfully with ID:", fileInfo.insertedId.toString());
             } catch (error) {
@@ -874,8 +725,14 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
           }
         },
         error: (error: Error) => {
-          throw new Error(`CSV parsing failed: ${error.message}`);
-        },
+          console.error("CSV parsing error:", error);
+          toast({
+            title: "Parsing Error",
+            description: error.message,
+            variant: "destructive",
+          });
+          setImporting(false);
+        }
       });
     } catch (error) {
       console.error("Import error:", error);
@@ -906,22 +763,22 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
   };
 
   const resetDialog = () => {
-    setFile(null)
-    setPreviewData([])
-    setValidationErrors([])
-    setProgress(0)
-    setImporting(false)
+    setFile(null);
+    setPreviewData([]);
+    setValidationErrors([]);
+    setProgress(0);
+    setImporting(false);
     if (fileInputRef.current) {
-      fileInputRef.current.value = ""
+      fileInputRef.current.value = "";
     }
-  }
+  };
 
   const handleClose = () => {
     if (!importing) {
-      resetDialog()
-      onOpenChange(false)
+      resetDialog();
+      onOpenChange(false);
     }
-  }
+  };
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -935,163 +792,62 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
         </DialogHeader>
 
         <div className="space-y-6">
-          {/* Import Mode Selection */}
-          <div className="space-y-3">
+          {/* Import mode selection */}
+          <div className="flex flex-col space-y-2">
             <Label className="text-sm font-medium">Import Mode</Label>
-            <RadioGroup value={importMode} onValueChange={(value: "replace" | "append") => setImportMode(value)}>
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="replace" id="replace" />
-                <Label htmlFor="replace" className="flex items-center gap-2">
-                  <X className="h-4 w-4 text-red-500" />
-                  Replace all existing data
-                  {existingDataCount > 0 && (
-                    <span className="text-sm text-muted-foreground">
-                      (will remove {existingDataCount.toLocaleString()} existing records)
-                    </span>
-                  )}
-                </Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="append" id="append" />
-                <Label htmlFor="append" className="flex items-center gap-2">
-                  <CheckCircle className="h-4 w-4 text-green-500" />
-                  Append to existing data
-                  {existingDataCount > 0 && (
-                    <span className="text-sm text-muted-foreground">
-                      (add to {existingDataCount.toLocaleString()} existing records)
-                    </span>
-                  )}
-                </Label>
-              </div>
-            </RadioGroup>
-          </div>
-
-          {/* Cloud Storage Option */}
-          <div className="space-y-3">
-            <Label className="text-sm font-medium">Storage Options</Label>
-            <RadioGroup value={useCloud ? "cloud" : "local"} onValueChange={(value: string) => setUseCloud(value === "cloud")}>
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="cloud" id="cloud" />
-                <Label htmlFor="cloud" className="flex items-center gap-2">
-                  <CloudUpload className="h-4 w-4 text-blue-500" />
-                  Use Cloud Storage
-                  <span className="text-sm text-muted-foreground">
-                    (Store CSV file in Cloudinary for future use)
-                  </span>
-                </Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <RadioGroupItem value="local" id="local" />
-                <Label htmlFor="local" className="flex items-center gap-2">
-                  <FileText className="h-4 w-4" />
-                  Local Import Only
-                  <span className="text-sm text-muted-foreground">
-                    (Don't store file in cloud)
-                  </span>
-                </Label>
-              </div>
-            </RadioGroup>
-          </div>
-          
-          {/* Cloudinary Stored Files */}
-          {useCloud && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium">Previously Uploaded Files</Label>
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  onClick={fetchCloudinaryFiles}
-                  disabled={cloudinaryLoading}
+            <RadioGroup
+              value={importMode}
+              onValueChange={(value) => setImportMode(value as "replace" | "append")}
+              className="grid grid-cols-2 gap-4"
+            >
+              <div>
+                <RadioGroupItem value="replace" id="replace" className="peer sr-only" />
+                <Label
+                  htmlFor="replace"
+                  className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary"
                 >
-                  <Database className="h-4 w-4 mr-2" />
-                  {cloudinaryLoading ? "Loading..." : "Refresh"}
-                </Button>
+                  <span className="text-sm font-semibold">Replace Existing Data</span>
+                  {existingDataCount > 0 && (
+                    <span className="text-xs text-muted-foreground">
+                      Will replace {existingDataCount.toLocaleString()} existing records
+                    </span>
+                  )}
+                </Label>
               </div>
-              
-              <div className="border rounded-md p-2 h-36 overflow-y-auto bg-gray-50 dark:bg-gray-900">
-                {cloudinaryLoading ? (
-                  <div className="flex items-center justify-center h-full">
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600 mr-2"></div>
-                    <span>Loading files...</span>
-                  </div>
-                ) : cloudinaryFiles.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-                    <CloudOff className="h-8 w-8 mb-2" />
-                    <span>No stored files found</span>
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    {cloudinaryFiles.map((file) => (
-                      <div 
-                        key={file.public_id} 
-                        className={`
-                          flex flex-col p-2 rounded hover:bg-accent cursor-pointer
-                          ${selectedCloudinaryFile === file.public_id ? 'bg-primary/10 border border-primary/30' : ''}
-                        `}
-                        onClick={() => handleCloudinaryFileSelect(file.public_id)}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center">
-                            <FileText className="h-4 w-4 mr-2 text-blue-500" />
-                            <span className="text-sm font-medium">
-                              {file.public_id.split('/').pop() || 'Untitled File'}
-                              {!file.public_id.toLowerCase().includes('.csv') && '.csv'}
-                            </span>
-                          </div>
-                          <span className="text-xs text-muted-foreground">
-                            {new Date(file.created_at).toLocaleDateString()}
-                          </span>
-                        </div>
-                        
-                        {/* Show MongoDB metadata if available */}
-                        {file.recordCount && (
-                          <div className="mt-1 flex items-center justify-between">
-                            <span className="text-xs text-muted-foreground">
-                              {file.recordCount.toLocaleString()} records
-                            </span>
-                            {file.description && (
-                              <span className="text-xs text-muted-foreground max-w-48 truncate" title={file.description}>
-                                {file.description}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
+              <div>
+                <RadioGroupItem value="append" id="append" className="peer sr-only" />
+                <Label
+                  htmlFor="append"
+                  className="flex flex-col items-center justify-between rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent hover:text-accent-foreground peer-data-[state=checked]:border-primary [&:has([data-state=checked])]:border-primary"
+                >
+                  <span className="text-sm font-semibold">Append to Existing Data</span>
+                  {existingDataCount > 0 && (
+                    <span className="text-xs text-muted-foreground">
+                      Will add to {existingDataCount.toLocaleString()} existing records
+                    </span>
+                  )}
+                </Label>
               </div>
-            </div>
-          )}
+            </RadioGroup>
+          </div>
 
-          {/* File Upload */}
-          <div className="space-y-3">
-            <Label className="text-sm font-medium">Select CSV File</Label>
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".csv"
-                onChange={handleFileSelect}
-                className="hidden"
-                disabled={importing}
-              />
+          {/* Cloud storage toggle */}
+          <div className="flex items-center justify-between">
+            <div className="flex flex-col">
+              <span className="text-sm font-medium">Cloud Storage</span>
+              <span className="text-xs text-muted-foreground">
+                Store your CSV files in the cloud for future access
+              </span>
+            </div>
+            <div className="flex items-center space-x-2">
+              {useCloud ? <CloudUpload size={18} /> : <CloudOff size={18} />}
               <Button
                 variant="outline"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={importing}
-                className="mb-2"
+                size="sm"
+                onClick={() => setUseCloud(!useCloud)}
               >
-                <FileText className="h-4 w-4 mr-2" />
-                Choose CSV File
+                {useCloud ? "Enabled" : "Disabled"}
               </Button>
-              <p className="text-sm text-muted-foreground">Select a CSV file with delivery challan data</p>
-              {file && (
-                <p className="text-sm font-medium mt-2 text-green-600">
-                  Selected: {file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)
-                </p>
-              )}
             </div>
           </div>
 
@@ -1100,41 +856,74 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
             <Alert variant="destructive">
               <AlertTriangle className="h-4 w-4" />
               <AlertDescription>
-                <div className="space-y-1">
-                  <p className="font-medium">Validation Errors:</p>
-                  <ul className="list-disc list-inside space-y-1">
-                    {validationErrors.map((error, index) => (
-                      <li key={index} className="text-sm">
-                        {error}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+                <div className="font-medium">The CSV file is missing required columns:</div>
+                <ul className="ml-4 mt-2 list-disc text-sm">
+                  {validationErrors.map((error, i) => (
+                    <li key={i}>{error}</li>
+                  ))}
+                </ul>
               </AlertDescription>
             </Alert>
           )}
 
-          {/* Data Preview */}
-          {previewData.length > 0 && validationErrors.length === 0 && (
+          {/* File Upload Area */}
+          <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center">
+            <input
+              type="file"
+              accept=".csv"
+              onChange={handleFileSelect}
+              ref={fileInputRef}
+              className="hidden"
+              id="csv-file-input"
+            />
+            <label
+              htmlFor="csv-file-input"
+              className="flex flex-col items-center justify-center cursor-pointer py-2"
+            >
+              <FileText className="h-10 w-10 text-gray-400 mb-2" />
+              <span className="text-sm font-medium mb-1">
+                {file ? file.name : "Select a CSV file to import"}
+              </span>
+              <span className="text-xs text-gray-500">
+                {file
+                  ? `${(file.size / 1024).toFixed(1)} KB`
+                  : "Click to browse or drag and drop"}
+              </span>
+              <Button type="button" variant="outline" size="sm" className="mt-3">
+                Browse Files
+              </Button>
+            </label>
+          </div>
+
+          {/* Data Preview Section */}
+          {previewData.length > 0 && (
             <div className="space-y-3">
-              <Label className="text-sm font-medium">Data Preview (First 5 rows)</Label>
-              <div className="border rounded-lg overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead className="bg-gray-50">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-medium">Data Preview</h3>
+                <span className="text-xs text-muted-foreground">
+                  {previewData.length} rows shown (limited preview)
+                </span>
+              </div>
+              <div className="max-h-48 overflow-auto rounded-md border">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50 sticky top-0">
                     <tr>
-                      {requiredColumns.map((col) => (
-                        <th key={col} className="p-2 text-left font-medium border-r">
-                          {col}
+                      {Object.keys(previewData[0] || {}).slice(0, 6).map((key) => (
+                        <th
+                          key={key}
+                          className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                        >
+                          {key}
                         </th>
                       ))}
                     </tr>
                   </thead>
-                  <tbody>
-                    {previewData.map((row, index) => (
-                      <tr key={index} className={index % 2 === 0 ? "bg-gray-50" : ""}>
-                        {requiredColumns.map((col) => (
-                          <td key={col} className="p-2 border-r max-w-32 truncate" title={row[col]}>
-                            {row[col]}
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {previewData.map((row, i) => (
+                      <tr key={i}>
+                        {Object.keys(row).slice(0, 6).map((key) => (
+                          <td key={key} className="px-3 py-2 text-sm text-gray-500 truncate max-w-[200px]">
+                            {String(row[key] || "")}
                           </td>
                         ))}
                       </tr>
@@ -1145,69 +934,85 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
             </div>
           )}
 
-          {/* Import Progress */}
+          {/* Cloud File Selection */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium">Previously Uploaded Files</h3>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={fetchCloudinaryFiles}
+                disabled={cloudinaryLoading}
+              >
+                <Database className="h-3.5 w-3.5 mr-1" />
+                Refresh
+              </Button>
+            </div>
+            <div className="max-h-48 overflow-auto rounded-md border p-1">
+              {cloudinaryLoading ? (
+                <div className="flex items-center justify-center h-24">
+                  <div className="text-sm text-muted-foreground">Loading stored files...</div>
+                </div>
+              ) : cloudinaryFiles.length === 0 ? (
+                <div className="flex items-center justify-center h-24">
+                  <div className="text-sm text-muted-foreground">No stored files found</div>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {cloudinaryFiles.map((cloudFile) => (
+                    <div
+                      key={cloudFile.public_id}
+                      className={`flex items-center justify-between p-2 rounded-md cursor-pointer hover:bg-gray-100 ${
+                        selectedCloudinaryFile === cloudFile.public_id ? "bg-gray-100" : ""
+                      }`}
+                      onClick={() => !importing && handleCloudinaryFileSelect(cloudFile.public_id)}
+                    >
+                      <div className="flex items-center space-x-2">
+                        <FileText className="h-4 w-4 text-gray-400" />
+                        <div className="flex flex-col">
+                          <span className="text-sm font-medium truncate max-w-[300px]">
+                            {cloudFile.public_id.split("/").pop()}
+                          </span>
+                          {cloudFile.description && (
+                            <span className="text-xs text-muted-foreground truncate max-w-[300px]">
+                              {cloudFile.description}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {cloudFile.recordCount
+                          ? `${cloudFile.recordCount.toLocaleString()} records`
+                          : new Date(cloudFile.created_at).toLocaleDateString()}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Progress bar */}
           {importing && (
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <Label className="text-sm font-medium">Import Progress</Label>
-                <span className="text-sm text-muted-foreground">{progress}%</span>
+              <div className="flex justify-between text-xs">
+                <span>Importing data...</span>
+                <span>{progress}%</span>
               </div>
-              <Progress value={progress} className="w-full" />
-              <p className="text-sm text-muted-foreground">Processing CSV file... Please wait.</p>
+              <Progress value={progress} className="h-2" />
             </div>
           )}
-
-          {/* Required Columns Info */}
-          <div className="bg-blue-50 p-4 rounded-lg">
-            <h4 className="text-sm font-medium mb-2">Required Columns:</h4>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              {requiredColumns.map((col) => (
-                <div key={col} className="flex items-center gap-1">
-                  <CheckCircle className="h-3 w-3 text-green-500" />
-                  {col}
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
 
-        <DialogFooter className="flex flex-col sm:flex-row gap-2 items-start sm:items-center">
-          {useCloud && (
-            <div className="text-xs text-blue-600 flex items-center mr-auto">
-              <CloudUpload className="h-3 w-3 mr-1" />
-              Cloud storage enabled
-            </div>
-          )}
-          
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={handleClose} disabled={importing}>
-              Cancel
-            </Button>
-            <Button 
-              onClick={handleImport} 
-              disabled={(!file && !selectedCloudinaryFile) || validationErrors.length > 0 || importing}
-              variant="default"
-            >
-              {importing ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                  Importing...
-                </>
-              ) : selectedCloudinaryFile ? (
-                <>
-                  <Database className="h-4 w-4 mr-2" />
-                  Import from Cloud
-                </>
-              ) : (
-                <>
-                  <Upload className="h-4 w-4 mr-2" />
-                  Import Data {useCloud && "& Save to Cloud"}
-                </>
-              )}
-            </Button>
-          </div>
+        <DialogFooter className="flex items-center justify-between">
+          <Button variant="outline" onClick={handleClose} disabled={importing}>
+            Cancel
+          </Button>
+          <Button onClick={handleImport} disabled={!file || importing || validationErrors.length > 0}>
+            {importing ? "Importing..." : "Import Data"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  )
+  );
 }
