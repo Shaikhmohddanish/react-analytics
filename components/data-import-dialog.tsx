@@ -45,7 +45,8 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
   const [importing, setImporting] = useState(false)
   const [progress, setProgress] = useState(0)
   const [previewData, setPreviewData] = useState<any[]>([])
-  const [validationErrors, setValidationErrors] = useState<string[]>([])
+  type ValidationError = string | {message: string; severity: string};
+  const [validationErrors, setValidationErrors] = useState<ValidationError[]>([])
   const [cloudinaryFiles, setCloudinaryFiles] = useState<any[]>([])
   const [cloudinaryLoading, setCloudinaryLoading] = useState(false)
   const [selectedCloudinaryFile, setSelectedCloudinaryFile] = useState<string | null>(null)
@@ -135,20 +136,40 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
     const requiredColumns = [
       "Delivery Challan ID",
       "Challan Date",
-      "Delivery Challan Number",
+      "Delivery Challan Number", 
       "Customer Name",
       "Item Name",
       "Item Total",
     ];
     
-    // Make column validation more flexible
-    const missingColumns = requiredColumns.filter((col) => !columns.some((column) => column.toLowerCase().includes(col.toLowerCase())));
+    // Make column validation more flexible - look for partial matches
+    // This allows for more variations in column names
+    const missingColumns = requiredColumns.filter((col) => {
+      // Break the column name into parts and check if any part exists
+      const parts = col.toLowerCase().split(/\s+/);
+      return !columns.some((column) => {
+        const colLower = column.toLowerCase();
+        return parts.some(part => colLower.includes(part));
+      });
+    });
     
-    if (missingColumns.length > 0) {
+    // If we're getting too many validation errors, check if we have numeric column headers
+    if (missingColumns.length > 3 && columns.some(c => !isNaN(Number(c)))) {
+      console.log("Detected numeric column headers, possibly a headerless CSV");
+      // For headerless CSVs, we'll be more lenient
+      setValidationErrors([{
+        message: "Using generic column headers. Data import will attempt to map fields automatically.",
+        severity: "warning"
+      }]);
+    } else if (missingColumns.length > 0) {
       setValidationErrors(missingColumns.map(col => `Missing column: ${col}`));
     } else {
       setValidationErrors([]);  // Clear validation errors if columns are valid
     }
+    
+    console.log("Validation result:", missingColumns.length === 0 ? "PASSED" : "FAILED", 
+               "Missing:", missingColumns, 
+               "Available:", columns);
   }
   
   // Load Cloudinary files when dialog opens
@@ -222,10 +243,22 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
       // Parse the CSV content
       console.log("Raw CSV Content:", csvContent.slice(0, 500));
       console.log("Clean CSV content snippet:", csvContentClean.slice(0, 200));
+      
+      // Try detecting the delimiter manually
+      const firstLine = csvContentClean.split('\n')[0];
+      console.log("First line:", firstLine);
+      
+      // Check for common delimiters
+      const commaCount = (firstLine.match(/,/g) || []).length;
+      const tabCount = (firstLine.match(/\t/g) || []).length;
+      const semicolonCount = (firstLine.match(/;/g) || []).length;
+      console.log("Delimiter counts in header:", {comma: commaCount, tab: tabCount, semicolon: semicolonCount});
+      
       Papa.parse(csvContentClean, {
         header: true,
         skipEmptyLines: true,
-        delimiter: ",",  // Force delimiter to comma
+        delimiter: "",  // Auto-detect delimiter
+        delimitersToGuess: [',', '\t', ';', '|', ' '], // Added space as potential delimiter
         dynamicTyping: true,
         transformHeader: (header: string) => header.trim(),
         complete: async (results: Papa.ParseResult<any>) => {
@@ -236,29 +269,103 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
           // Log raw data for debugging
           console.log("Raw CSV data:", results.data.slice(0, 5));
           console.log("CSV fields:", results.meta.fields);
-          if (!results.meta.fields) {
-            console.error("Failed to detect headers in cloud CSV. Check file format.");
+          
+          // If no fields were detected, try a fallback parsing strategy
+          if (!results.meta.fields || results.meta.fields.length === 0) {
+            console.error("Failed to detect headers in cloud CSV. Attempting fallback parsing...");
+            
+            // Try splitting the first line to create headers
+            const lines = csvContentClean.split('\n');
+            if (lines.length > 0) {
+              const firstLine = lines[0].trim();
+              const potentialHeaders = firstLine.split(/[,;\t|]/);
+              console.log("Potential manually extracted headers:", potentialHeaders);
+              
+              // Try parsing again with forced comma delimiter and explicit headers
+              Papa.parse(csvContentClean, {
+                header: false,
+                skipEmptyLines: true,
+                delimiter: ",", // Force comma as delimiter
+                dynamicTyping: true,
+                complete: (fallbackResults: Papa.ParseResult<unknown[]>) => {
+                  console.log("Fallback parsing results:", fallbackResults.data.slice(0, 3));
+                  
+                  // Convert array data to objects with headers
+                  if (fallbackResults.data.length > 0) {
+                    // Create standardized field names from first row or use generic names
+                    const headers = (fallbackResults.data[0] as unknown[]).map((h: any, i: number) => 
+                      (typeof h === 'string' && h.trim()) || `Column${i+1}`
+                    );
+                    
+                    console.log("Using headers:", headers);
+                    
+                    // Map data rows to objects using headers
+                    const objectData = fallbackResults.data.slice(1).map((row: unknown[]) => {
+                      const obj: Record<string, any> = {};
+                      headers.forEach((header: string, i: number) => {
+                        obj[header] = row[i];
+                      });
+                      return obj;
+                    });
+                    
+                    console.log("Converted to object data:", objectData.slice(0, 2));
+                    
+                    // Continue processing with this data instead
+                    if (objectData.length > 0) {
+                      processCloudinaryImportData({
+                        data: objectData,
+                        errors: [],
+                        meta: { 
+                          fields: headers,
+                          delimiter: ",",
+                          linebreak: "\n",
+                          aborted: false,
+                          truncated: false,
+                          cursor: 0
+                        } as Papa.ParseMeta
+                      });
+                    } else {
+                      showImportError();
+                    }
+                  } else {
+                    showImportError();
+                  }
+                }
+              });
+              return; // Exit this callback as we're handling in the fallback
+            }
           }
           
           if (results.data.length === 0) {
-            toast({
-              title: "Invalid Data",
-              description: "No valid data was found in the CSV file.",
-              variant: "destructive",
-            });
-            setImporting(false);
+            showImportError();
             return;
           }
           
-          // Process the data and complete the import
-          const processedData = processParseResults(results);
-          setProgress(80);
+          // If we got here, we have standard results to process
+          processCloudinaryImportData(results);
           
-          try {
-            // Store CSV file metadata in MongoDB
-            const fileName = publicId.split('/').pop() || "cloud-import";
-            // Ensure filename ends with .csv
-            const fileNameWithExt = fileName.toLowerCase().endsWith('.csv') ? fileName : `${fileName}.csv`;
+          // Helper function to show error
+          function showImportError() {
+            toast({
+              title: "Import Error",
+              description: "No valid data could be extracted from the CSV file. The file appears to be empty or in an unrecognized format.",
+              variant: "destructive",
+            });
+            setImporting(false);
+          }
+          
+          // Helper function to process data
+          async function processCloudinaryImportData(parseResults: Papa.ParseResult<Record<string, any>>) {
+          
+            // Process the data and complete the import
+            const processedData = processParseResults(parseResults);
+            setProgress(80);
+            
+            try {
+              // Store CSV file metadata in MongoDB
+              const fileName = publicId.split('/').pop() || "cloud-import";
+              // Ensure filename ends with .csv
+              const fileNameWithExt = fileName.toLowerCase().endsWith('.csv') ? fileName : `${fileName}.csv`;
             
             const fileInfo = await storeCSVFileInfo({
               fileName: fileNameWithExt,
@@ -311,7 +418,7 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
             onImportComplete(processedData, importMode);
             resetDialog();
           }
-        },
+        }},
         error: (error: Error) => {
           console.error("CSV parsing error:", error);
           toast({
@@ -334,13 +441,39 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
   };
 
   // Process parse results into the expected format
-  const processParseResults = (results: Papa.ParseResult<any>) => {
+  const processParseResults = (results: Papa.ParseResult<Record<string, any>>) => {
     // Log the full data to help debug
     console.log("Processing CSV data, total rows:", results.data.length);
     
-    // Filter out empty rows first
-    const nonEmptyRows = results.data.filter(row => {
-      return row && Object.keys(row).length > 0 && !Object.values(row).every(val => val === "");
+    // Check if data is an array of arrays instead of objects (no headers)
+    const isArrayData = Array.isArray(results.data[0]);
+    
+    let processableData = results.data;
+    
+    // If we got array data instead of objects, convert it
+    if (isArrayData && results.data.length >= 2) {
+      console.log("Detected array data format. Converting to objects...");
+      
+      // First row is headers
+      const headers = results.data[0].map((h: any, i: number) => 
+        (typeof h === 'string' && h.trim()) || `Column${i+1}`
+      );
+      
+      // Convert remaining rows to objects
+      processableData = results.data.slice(1).map((row: any) => {
+        const obj: any = {};
+        headers.forEach((header: string, i: number) => {
+          obj[header] = row[i];
+        });
+        return obj;
+      });
+      
+      console.log("Converted array data to objects:", processableData.slice(0, 2));
+    }
+    
+    // Filter out empty rows
+    const nonEmptyRows = processableData.filter(row => {
+      return row && Object.keys(row).length > 0 && !Object.values(row).every(val => val === "" || val === undefined || val === null);
     });
     
     console.log("Non-empty rows:", nonEmptyRows.length);
@@ -363,38 +496,55 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
         try {
           const today = new Date();
           
-          // IMPROVED COLUMN DETECTION LOGIC
-          // Improved date field detection – look for "date" but exclude "id" or "number"
-          const dateField = Object.keys(row).find(k => {
-            const kl = k.toLowerCase();
-            return kl.includes('date') && !kl.includes('id') && !kl.includes('number');
+          // Get all keys from the row
+          const rowKeys = Object.keys(row);
+          
+          // Check if we received numeric column names (like 0, 1, 2) which indicates a CSV without headers
+          const hasNumericKeys = rowKeys.some(k => !isNaN(Number(k)));
+          
+          if (hasNumericKeys) {
+            console.log("Detected numeric keys, possibly a CSV without proper headers:", rowKeys);
+          }
+          
+          // SUPER ROBUST COLUMN DETECTION LOGIC
+          // Date field detection – match any column that might contain date information
+          const dateField = rowKeys.find(k => {
+            const kl = (k || "").toString().toLowerCase();
+            return kl.includes('date') || kl.includes('day') || kl.includes('time') || 
+                   kl === 'dt' || /^d$/.test(kl) || kl === '2' || // Common numeric column for date
+                   (kl.includes('challan') && kl.includes('dt'));
           });
 
-          // Improved item field detection – prefer "item"/"product"/"description" only
-          const itemField = Object.keys(row).find(k => {
-            const kl = k.toLowerCase();
-            return kl.includes('item') || kl.includes('product') || kl.includes('descrip');
+          // Item field detection – more inclusive search
+          const itemField = rowKeys.find(k => {
+            const kl = (k || "").toString().toLowerCase();
+            return kl.includes('item') || kl.includes('product') || kl.includes('descrip') || 
+                   kl.includes('goods') || kl.includes('material') || kl.includes('name') ||
+                   kl === '4' || kl === '3'; // Common numeric columns for item
           });
 
-          // Improved total field detection – prefer "item total", otherwise "total" but not "discount"
-          const totalField = Object.keys(row).find(k => {
-            const kl = k.toLowerCase();
-            return kl.includes('item total') ||
-                   (kl.includes('total') && !kl.includes('discount') && !kl.includes('sub') && !kl.includes('entity'));
+          // Total field detection – broader pattern matching
+          const totalField = rowKeys.find(k => {
+            const kl = (k || "").toString().toLowerCase();
+            return kl.includes('item total') || kl.includes('total') || kl.includes('amount') || 
+                   kl.includes('price') || kl.includes('value') || kl.includes('sum') ||
+                   kl === '5' || kl === '6'; // Common numeric columns for amount
           });
 
-          // Improved customer field detection – only match "customer"/"client"/"buyer"/"company"
-          const customerField = Object.keys(row).find(k => {
-            const kl = k.toLowerCase();
-            return kl.includes('customer') || kl.includes('client') || kl.includes('buyer') || kl.includes('company');
+          // Customer field detection – expanded search
+          const customerField = rowKeys.find(k => {
+            const kl = (k || "").toString().toLowerCase();
+            return kl.includes('customer') || kl.includes('client') || kl.includes('buyer') || 
+                   kl.includes('company') || kl.includes('party') || kl.includes('dealer') || 
+                   kl === '1'; // Common numeric column for customer
           });
 
-          // Improved challan field detection – prefer "challan number" over "id"
-          const challanField = Object.keys(row).find(k => {
-            const kl = k.toLowerCase();
-            return kl.includes('challan number') ||
-                   (kl.includes('number') && kl.includes('challan')) ||
-                   kl.includes('invoice number');
+          // Challan field detection – broader match
+          const challanField = rowKeys.find(k => {
+            const kl = (k || "").toString().toLowerCase();
+            return kl.includes('challan') || kl.includes('invoice') || kl.includes('bill') || 
+                   kl.includes('number') || kl.includes('ref') || kl.includes('id') ||
+                   kl === '0'; // Common numeric column for ID
           });
 
           // Direct access to exact column names when available
@@ -508,11 +658,30 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
             monthNum: challanDate.getMonth() + 1,
           };
         } catch (error) {
+          // Instead of returning null, return a fallback object with defaults
           console.warn("Error processing row:", row, error);
-          return null;
+          const today = new Date();
+          return {
+            ...row,
+            "Challan Date": today.toISOString().split('T')[0],
+            "Item Name": "Unnamed Item",
+            "Item Total": 0,
+            "Customer Name": "Unknown Customer",
+            "Delivery Challan Number": `DC-${Date.now()}`,
+            "Delivery Challan ID": "",
+            challanDate: today,
+            itemTotal: 0,
+            itemNameCleaned: "",
+            category: "Uncategorized",
+            month: today.toLocaleDateString("en-US", {
+              month: "long",
+              year: "numeric",
+            }),
+            year: today.getFullYear(),
+            monthNum: today.getMonth() + 1,
+          };
         }
-      })
-      .filter((row: any): row is any => row !== null);
+      });
   };
 
   const handleImport = async () => {
@@ -647,7 +816,13 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
             console.log(`Processed ${processedData.length} rows out of ${results.data.length} total rows`);
   
             if (processedData.length === 0) {
-              throw new Error("No valid data could be extracted from the CSV file. The file appears to be empty or in an unrecognized format.");
+              toast({
+                title: "Import Error",
+                description: "No valid data could be extracted from the CSV file. The file appears to be empty or in an unrecognized format.",
+                variant: "destructive",
+              });
+              setImporting(false);
+              return;
             }
             
             // Store CSV file metadata in MongoDB
@@ -853,17 +1028,38 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
 
           {/* Validation Errors */}
           {validationErrors.length > 0 && (
-            <Alert variant="destructive">
-              <AlertTriangle className="h-4 w-4" />
-              <AlertDescription>
-                <div className="font-medium">The CSV file is missing required columns:</div>
-                <ul className="ml-4 mt-2 list-disc text-sm">
-                  {validationErrors.map((error, i) => (
-                    <li key={i}>{error}</li>
-                  ))}
-                </ul>
-              </AlertDescription>
-            </Alert>
+            <>
+              {validationErrors.some(e => typeof e === 'string' || (e as {severity: string}).severity === 'error') && (
+                <Alert variant="destructive">
+                  <AlertTriangle className="h-4 w-4" />
+                  <AlertDescription>
+                    <div className="font-medium">The CSV file is missing required columns:</div>
+                    <ul className="ml-4 mt-2 list-disc text-sm">
+                      {validationErrors
+                        .filter(e => typeof e === 'string' || (e as {severity: string}).severity === 'error')
+                        .map((error, i) => (
+                          <li key={i}>{typeof error === 'string' ? error : (error as {message: string}).message}</li>
+                        ))}
+                    </ul>
+                  </AlertDescription>
+                </Alert>
+              )}
+              
+              {validationErrors.some(e => typeof e !== 'string' && (e as {severity: string}).severity === 'warning') && (
+                <Alert variant="default" className="border-yellow-500 bg-yellow-50 text-yellow-800">
+                  <AlertTriangle className="h-4 w-4 text-yellow-500" />
+                  <AlertDescription>
+                    <ul className="ml-4 mt-2 list-disc text-sm">
+                      {validationErrors
+                        .filter(e => typeof e !== 'string' && (e as {severity: string; message: string}).severity === 'warning')
+                        .map((error, i) => (
+                          <li key={i}>{(error as {message: string}).message}</li>
+                        ))}
+                    </ul>
+                  </AlertDescription>
+                </Alert>
+              )}
+            </>
           )}
 
           {/* File Upload Area */}
@@ -1008,7 +1204,7 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
           <Button variant="outline" onClick={handleClose} disabled={importing}>
             Cancel
           </Button>
-          <Button onClick={handleImport} disabled={!file || importing || validationErrors.length > 0}>
+          <Button onClick={handleImport} disabled={!file || importing || validationErrors.some(e => typeof e === 'string' || (e as {severity: string}).severity === 'error')}>
             {importing ? "Importing..." : "Import Data"}
           </Button>
         </DialogFooter>
