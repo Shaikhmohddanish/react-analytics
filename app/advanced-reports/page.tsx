@@ -271,7 +271,14 @@ export default function AdvancedReports() {
     percent: ((item.total / productTotals[item.product]) * 100).toFixed(2),
   }))
 
-  const months = [...new Set(data.map((d) => d.month))].sort()
+  // Sort months chronologically instead of alphabetically
+  const monthOrder = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+  ]
+  const months = [...new Set(data.map((d) => d.month))].sort((a, b) => {
+    return monthOrder.indexOf(a) - monthOrder.indexOf(b)
+  })
   const topProducts = Object.entries(productTotals)
     .sort(([, a], [, b]) => b - a)
     .slice(0, 15)

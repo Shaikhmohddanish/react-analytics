@@ -1,89 +1,39 @@
 "use client"
 
-import React, { useState } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import React from "react"
 import { useData } from "@/contexts/data-context"
-import { useFilter } from "@/contexts/filter-context"
-import ProductTrendsChart from "../../components/product-trends/product-trends-chart"
-import ProductFilters from "../../components/product-trends/product-filters"
-import { ExportButton } from "@/components/export-button"
-import { Loader2 } from "lucide-react"
+import { useFilters } from "@/contexts/filter-context"
+import { ProductFilters } from "@/components/product-trends/product-filters"
+import ProductTrendsChart from "@/components/product-trends/product-trends-chart"
 
 export default function ProductTrendsPage() {
-  const { data, loading } = useData()
-  const { filteredData } = useFilter()
-  const [selectedCategory, setSelectedCategory] = useState<string>("all")
-  const [selectedCustomerType, setSelectedCustomerType] = useState<string>("all")
-  
-  // Chart selectors for export
-  const chartSelectors = [
-    "#product-trends-chart-container"
-  ]
-
-  // Handle filter changes
-  const handleCategoryChange = (category: string) => {
-    setSelectedCategory(category)
-  }
-
-  const handleCustomerTypeChange = (customerType: string) => {
-    setSelectedCustomerType(customerType)
-  }
+  const { loading } = useData()
+  const { filteredData, hasActiveFilters } = useFilters()
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
-        <p className="text-muted-foreground">Loading product trends data...</p>
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
     )
   }
 
   return (
-    <div className="container mx-auto py-6 space-y-6">
-      <div className="flex justify-between items-center">
-        <div className="flex flex-col space-y-2">
-          <h1 className="text-3xl font-bold tracking-tight">Product Sales Trends</h1>
-          <p className="text-muted-foreground">
-            Analyze sales trends over time for each product category
-          </p>
+    <div className="space-y-6">
+      {/* Filter Status Indicator */}
+      {hasActiveFilters && (
+        <div className="p-4 rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950">
+          <div className="flex items-center space-x-2 text-blue-700 dark:text-blue-300">
+            <div className="h-4 w-4 rounded-full bg-blue-500"></div>
+            <span className="text-sm font-medium">
+              Showing product trends for {filteredData.length} filtered records
+            </span>
+          </div>
         </div>
-        <ExportButton 
-          chartSelectors={chartSelectors} 
-          title="Product-Sales-Trends" 
-        />
-      </div>
+      )}
 
-      <ProductFilters
-        onCategoryChange={handleCategoryChange}
-        onCustomerTypeChange={handleCustomerTypeChange}
-        selectedCategory={selectedCategory}
-        selectedCustomerType={selectedCustomerType}
-      />
-
-      <div className="grid grid-cols-1 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle>
-              {selectedCategory === "all" 
-                ? "All Categories" 
-                : `${selectedCategory} - Monthly Sales Trends`}
-            </CardTitle>
-            <CardDescription>
-              {selectedCustomerType === "all" 
-                ? "All customer types" 
-                : `Filtered by ${selectedCustomerType} customers`}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ProductTrendsChart 
-              data={filteredData}
-              selectedCategory={selectedCategory}
-              selectedCustomerType={selectedCustomerType}
-              height={500}
-            />
-          </CardContent>
-        </Card>
-      </div>
+      <ProductFilters />
+      <ProductTrendsChart />
     </div>
   )
 }

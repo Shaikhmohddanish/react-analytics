@@ -15,55 +15,41 @@ import {
 } from "recharts"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { ProcessedData } from "@/models"
-import { formatCurrency } from "@/models/dealer"
+import { useFilters } from "@/contexts/filter-context"
+import { formatCurrency } from "@/lib/analytics-utils"
 import { AlertCircle } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 interface ProductTrendsChartProps {
-  data: ProcessedData[]
-  selectedCategory: string
-  selectedCustomerType: string
   height?: number
 }
 
 export default function ProductTrendsChart({
-  data,
-  selectedCategory,
-  selectedCustomerType,
   height = 400
 }: ProductTrendsChartProps) {
+  const { filteredData } = useFilters()
   const [hasError, setHasError] = useState(false)
   const [chartType, setChartType] = useState<'line' | 'area'>('line')
 
   // Process data for the chart
   const chartData = useMemo(() => {
-    if (!data || data.length === 0) return []
+    if (!filteredData || filteredData.length === 0) return []
     
     try {
-      // Filter data based on selected category and customer type
-      const filteredData = data.filter(item => {
-        const categoryMatch = selectedCategory === "all" || 
-          (item.category && String(item.category) === selectedCategory)
-        const customerMatch = selectedCustomerType === "all" || 
-          (item.customerType && String(item.customerType) === selectedCustomerType)
-        return categoryMatch && customerMatch
-      })
-      
       // Group data by month and product
       const monthlySales = new Map<string, Map<string, number>>()
       
       filteredData.forEach(item => {
-        if (!item.date || !item.product || !item.amount) return
+        if (!item.challanDate || !item["Item Name"] || !item.itemTotal) return
         
         try {
           // Format month key: YYYY-MM
-          const date = new Date(item.date)
+          const date = new Date(item.challanDate)
           if (isNaN(date.getTime())) return // Skip invalid dates
           
           const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
-          const productKey = String(item.product)
-          const amount = typeof item.amount === 'number' ? item.amount : parseFloat(String(item.amount))
+          const productKey = String(item["Item Name"])
+          const amount = typeof item.itemTotal === 'number' ? item.itemTotal : parseFloat(String(item.itemTotal))
           
           if (isNaN(amount)) return // Skip invalid amounts
           
@@ -87,6 +73,20 @@ export default function ProductTrendsChart({
       // Convert to array format for chart
       const monthKeys = Array.from(monthlySales.keys()).sort()
       
+      // Calculate top products by total sales
+      const productTotals = new Map<string, number>()
+      monthlySales.forEach((productSales) => {
+        productSales.forEach((sales, product) => {
+          productTotals.set(product, (productTotals.get(product) || 0) + sales)
+        })
+      })
+      
+      // Get top 10 products
+      const topProducts = Array.from(productTotals.entries())
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 10)
+        .map(([product]) => product)
+      
       setHasError(false)
       return monthKeys.map(month => {
         // Parse date from key
@@ -99,191 +99,177 @@ export default function ProductTrendsChart({
           year: 'numeric'
         })
         
-        const productEntries = monthlySales.get(month)!
-        const productData: Record<string, number> = {}
+        // Get all products for this month
+        const productSales = monthlySales.get(month)!
+        const chartPoint: any = {
+          month: formattedMonth,
+          date: monthDate,
+          monthKey: month
+        }
         
-        // Convert Map to plain object for recharts
-        productEntries.forEach((value, key) => {
-          productData[key] = value
+        // Add only top products' sales to the chart point
+        topProducts.forEach(product => {
+          chartPoint[product] = productSales.get(product) || 0
         })
         
-        return {
-          month: formattedMonth,
-          ...productData
-        }
+        return chartPoint
       })
     } catch (error) {
       console.error("Error processing chart data:", error)
       setHasError(true)
       return []
     }
-  }, [data, selectedCategory, selectedCustomerType])
-  
-  // Get unique products for chart lines
+  }, [filteredData])
+
+  // Get products from chart data (already limited to top 10)
   const products = useMemo(() => {
-    if (chartData.length === 0) return []
+    if (!chartData.length) return []
     
     const productSet = new Set<string>()
-    
-    chartData.forEach(monthData => {
-      Object.keys(monthData).forEach(key => {
-        if (key !== 'month') {
+    chartData.forEach(point => {
+      Object.keys(point).forEach(key => {
+        if (key !== 'month' && key !== 'date' && key !== 'monthKey') {
           productSet.add(key)
         }
       })
     })
     
-    // If too many products, limit to top 10 by sales volume
-    const allProducts = Array.from(productSet)
-    if (allProducts.length > 10) {
-      // Calculate total sales per product
-      const productSales: Record<string, number> = {}
-      
-      chartData.forEach(monthData => {
-        allProducts.forEach(product => {
-          const value = monthData[product as keyof typeof monthData]
-          if (typeof value === 'number') {
-            productSales[product] = (productSales[product] || 0) + value
-          }
-        })
-      })
-      
-      // Sort products by sales and take top 10
-      return allProducts
-        .sort((a, b) => (productSales[b] || 0) - (productSales[a] || 0))
-        .slice(0, 10)
-    }
-    
-    return allProducts
+    return Array.from(productSet).sort()
   }, [chartData])
-  
-  // Generate colors for products
+
   const getProductColor = (index: number) => {
     const colors = [
-      '#8884d8', '#82ca9d', '#ffc658', '#ff7300', '#0088fe',
-      '#00C49F', '#FFBB28', '#FF8042', '#a4de6c', '#d0ed57'
+      '#3b82f6', // blue
+      '#10b981', // emerald
+      '#f59e0b', // amber
+      '#ef4444', // red
+      '#8b5cf6', // violet
+      '#06b6d4', // cyan
+      '#84cc16', // lime
+      '#f97316', // orange
+      '#ec4899', // pink
+      '#6366f1', // indigo
     ]
     return colors[index % colors.length]
   }
 
   if (hasError) {
     return (
-      <Alert variant="destructive" className="mb-4">
+      <Alert variant="destructive">
         <AlertCircle className="h-4 w-4" />
         <AlertTitle>Error</AlertTitle>
         <AlertDescription>
-          There was an error processing the data. Please check the data format and try again.
+          There was an error processing the chart data. Please try refreshing the page.
         </AlertDescription>
       </Alert>
     )
   }
 
-  if (chartData.length === 0) {
+  if (!chartData.length) {
     return (
-      <div 
-        className="flex items-center justify-center"
-        style={{ height: `${height}px` }}
-      >
-        <p className="text-muted-foreground">No data available for the selected filters</p>
-      </div>
+      <Alert>
+        <AlertCircle className="h-4 w-4" />
+        <AlertTitle>No Data</AlertTitle>
+        <AlertDescription>
+          No product trend data available for the selected filters.
+        </AlertDescription>
+      </Alert>
     )
   }
 
   return (
-    <>
-      <div className="flex justify-end mb-4">
-        <div className="space-x-2">
-          <Button 
-            size="sm" 
-            variant={chartType === 'line' ? 'default' : 'outline'}
-            onClick={() => setChartType('line')}
-          >
-            Line Chart
-          </Button>
-          <Button 
-            size="sm" 
-            variant={chartType === 'area' ? 'default' : 'outline'}
-            onClick={() => setChartType('area')}
-          >
-            Area Chart
-          </Button>
+    <Card>
+      <CardContent className="pt-6">
+        <div className="flex justify-between items-center mb-4">
+          <div>
+            <h3 className="text-lg font-semibold">Product Sales Trends</h3>
+            <p className="text-sm text-muted-foreground">
+              Showing top {products.length} products by total sales
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant={chartType === 'line' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setChartType('line')}
+            >
+              Line Chart
+            </Button>
+            <Button
+              variant={chartType === 'area' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setChartType('area')}
+            >
+              Area Chart
+            </Button>
+          </div>
         </div>
-      </div>
-
-      <ResponsiveContainer width="100%" height={height} id="product-trends-chart-container">
-        {chartType === 'line' ? (
-          <LineChart
-            data={chartData}
-            margin={{ top: 20, right: 30, left: 30, bottom: 50 }}
-          >
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis 
-              dataKey="month" 
-              angle={-45} 
-              textAnchor="end" 
-              height={60}
-              tick={{ fontSize: 12 }}
-            />
-            <YAxis 
-              tickFormatter={(value) => formatCurrency(value)}
-              width={80}
-            />
-            <Tooltip 
-              formatter={(value: number) => formatCurrency(value)}
-            />
-            <Legend layout="horizontal" verticalAlign="top" align="center" />
-            
-            {/* Render a line for each product */}
-            {products.map((product, index) => (
-              <Line
-                key={product}
-                type="monotone"
-                dataKey={product}
-                name={product}
-                stroke={getProductColor(index)}
-                activeDot={{ r: 6 }}
-                strokeWidth={2}
-              />
-            ))}
-          </LineChart>
-        ) : (
-          <AreaChart
-            data={chartData}
-            margin={{ top: 20, right: 30, left: 30, bottom: 50 }}
-          >
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis 
-              dataKey="month" 
-              angle={-45} 
-              textAnchor="end" 
-              height={60}
-              tick={{ fontSize: 12 }}
-            />
-            <YAxis 
-              tickFormatter={(value) => formatCurrency(value)}
-              width={80}
-            />
-            <Tooltip 
-              formatter={(value: number) => formatCurrency(value)}
-            />
-            <Legend layout="horizontal" verticalAlign="top" align="center" />
-            
-            {/* Render an area for each product */}
-            {products.map((product, index) => (
-              <Area
-                key={product}
-                type="monotone"
-                dataKey={product}
-                name={product}
-                fill={getProductColor(index)}
-                stroke={getProductColor(index)}
-                stackId="1"
-                fillOpacity={0.6}
-              />
-            ))}
-          </AreaChart>
-        )}
-      </ResponsiveContainer>
-    </>
+        
+        <div style={{ height }}>
+          <ResponsiveContainer width="100%" height="100%">
+            {chartType === 'line' ? (
+              <LineChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis 
+                  dataKey="month" 
+                  tick={{ fontSize: 12 }}
+                  interval="preserveStartEnd"
+                />
+                <YAxis 
+                  tick={{ fontSize: 12 }}
+                  tickFormatter={(value) => `₹${(value / 100000).toFixed(0)}L`}
+                />
+                <Tooltip
+                  formatter={(value: number) => [formatCurrency(value), "Sales"]}
+                  labelStyle={{ fontSize: "12px" }}
+                />
+                <Legend />
+                {products.map((product, index) => (
+                  <Line
+                    key={product}
+                    type="monotone"
+                    dataKey={product}
+                    stroke={getProductColor(index)}
+                    strokeWidth={2}
+                    dot={{ r: 4 }}
+                    name={product}
+                  />
+                ))}
+              </LineChart>
+            ) : (
+              <AreaChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis 
+                  dataKey="month" 
+                  tick={{ fontSize: 12 }}
+                  interval="preserveStartEnd"
+                />
+                <YAxis 
+                  tick={{ fontSize: 12 }}
+                  tickFormatter={(value) => `₹${(value / 100000).toFixed(0)}L`}
+                />
+                <Tooltip
+                  formatter={(value: number) => [formatCurrency(value), "Sales"]}
+                  labelStyle={{ fontSize: "12px" }}
+                />
+                <Legend />
+                {products.map((product, index) => (
+                  <Area
+                    key={product}
+                    type="monotone"
+                    dataKey={product}
+                    stroke={getProductColor(index)}
+                    fill={getProductColor(index)}
+                    fillOpacity={0.3}
+                    strokeWidth={2}
+                    name={product}
+                  />
+                ))}
+              </AreaChart>
+            )}
+          </ResponsiveContainer>
+        </div>
+      </CardContent>
+    </Card>
   )
 }

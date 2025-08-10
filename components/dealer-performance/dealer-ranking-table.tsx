@@ -1,315 +1,378 @@
 "use client"
 
-import React, { useMemo, useState } from "react"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+import React, { useState, useMemo } from "react"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { 
-  ArrowDown, 
-  ArrowUp, 
-  ArrowUpDown, 
-  ChevronDown, 
-  Download, 
-  MoreHorizontal,
-  Search
-} from "lucide-react"
-import { calculateDealerMetrics, formatCurrency, generateDealerRankings } from "@/models/dealer"
-import { ProcessedData } from "@/models"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { DealerAnalytics } from "@/lib/analytics-utils"
+import { formatCurrency, formatNumber, formatPercentage } from "@/lib/analytics-utils"
+import { Search, TrendingUp, TrendingDown, Award, Crown, Medal, Star, ChevronLeft, ChevronRight } from "lucide-react"
 
 interface DealerRankingTableProps {
-  data: ProcessedData[]
+  dealerAnalytics: DealerAnalytics[] | null
 }
 
-type SortField = 'rank' | 'dealer' | 'totalSales' | 'orderCount' | 'avgOrderValue' | 'growth'
-type SortDirection = 'asc' | 'desc'
+type SortField = "totalSales" | "totalOrders" | "marketShare" | "loyaltyScore" | "growthRate" | "orderFrequency"
+type SortDirection = "asc" | "desc"
 
-export default function DealerRankingTable({ data }: DealerRankingTableProps) {
-  const [sortField, setSortField] = useState<SortField>('rank')
-  const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
-  const [searchTerm, setSearchTerm] = useState('')
-  const [page, setPage] = useState(1)
-  const rowsPerPage = 10
+const ITEMS_PER_PAGE = 10
 
-  // Calculate dealer metrics
-  const metrics = useMemo(() => {
-    return calculateDealerMetrics(data)
-  }, [data])
+export default function DealerRankingTable({ dealerAnalytics }: DealerRankingTableProps) {
+  const [searchTerm, setSearchTerm] = useState("")
+  const [sortField, setSortField] = useState<SortField>("totalSales")
+  const [sortDirection, setSortDirection] = useState<SortDirection>("desc")
+  const [selectedTier, setSelectedTier] = useState<string>("all")
+  const [currentPage, setCurrentPage] = useState(1)
 
-  // Generate dealer rankings
-  const rankings = useMemo(() => {
-    return generateDealerRankings(metrics, data)
-  }, [metrics, data])
+  const filteredAndSortedDealers = useMemo(() => {
+    if (!dealerAnalytics) return []
 
-  // Sort and filter data
-  const sortedAndFilteredData = useMemo(() => {
-    let filtered = [...rankings]
-    
-    // Apply search filter
-    if (searchTerm) {
-      const search = searchTerm.toLowerCase()
-      filtered = filtered.filter((dealer) => 
-        dealer.dealer.toLowerCase().includes(search) || 
-        dealer.topCategory.toLowerCase().includes(search)
-      )
-    }
-    
-    // Apply sorting
-    filtered.sort((a, b) => {
-      let comparison = 0
-      
-      switch (sortField) {
-        case 'rank':
-          comparison = a.rank - b.rank
-          break
-        case 'dealer':
-          comparison = a.dealer.localeCompare(b.dealer)
-          break
-        case 'totalSales':
-          comparison = a.totalSales - b.totalSales
-          break
-        case 'orderCount':
-          comparison = a.orderCount - b.orderCount
-          break
-        case 'avgOrderValue':
-          comparison = a.avgOrderValue - b.avgOrderValue
-          break
-        case 'growth':
-          comparison = a.growth - b.growth
-          break
-        default:
-          comparison = a.rank - b.rank
-      }
-      
-      return sortDirection === 'asc' ? comparison : -comparison
+    let filtered = dealerAnalytics.filter(dealer => {
+      const matchesSearch = dealer.dealerName.toLowerCase().includes(searchTerm.toLowerCase())
+      const matchesTier = selectedTier === "all" || dealer.tier === selectedTier
+      return matchesSearch && matchesTier
     })
-    
+
+    // Sort the filtered results
+    filtered.sort((a, b) => {
+      const aValue = a[sortField]
+      const bValue = b[sortField]
+      
+      if (sortDirection === "asc") {
+        return aValue > bValue ? 1 : -1
+      } else {
+        return aValue < bValue ? 1 : -1
+      }
+    })
+
     return filtered
-  }, [rankings, searchTerm, sortField, sortDirection])
+  }, [dealerAnalytics, searchTerm, sortField, sortDirection, selectedTier])
 
-  // Paginate data
-  const paginatedData = useMemo(() => {
-    const startIndex = (page - 1) * rowsPerPage
-    return sortedAndFilteredData.slice(startIndex, startIndex + rowsPerPage)
-  }, [sortedAndFilteredData, page])
+  // Pagination logic
+  const totalPages = Math.ceil(filteredAndSortedDealers.length / ITEMS_PER_PAGE)
+  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE
+  const endIndex = startIndex + ITEMS_PER_PAGE
+  const paginatedDealers = filteredAndSortedDealers.slice(startIndex, endIndex)
 
-  // Handle sorting
+  // Reset to first page when filters change
+  React.useEffect(() => {
+    setCurrentPage(1)
+  }, [searchTerm, selectedTier, sortField, sortDirection])
+
+  const getTierIcon = (tier: string) => {
+    switch (tier) {
+      case "Platinum":
+        return <Crown className="h-4 w-4 text-purple-500" />
+      case "Gold":
+        return <Medal className="h-4 w-4 text-yellow-500" />
+      case "Silver":
+        return <Award className="h-4 w-4 text-gray-500" />
+      default:
+        return <Star className="h-4 w-4 text-orange-500" />
+    }
+  }
+
+  const getTierColor = (tier: string) => {
+    switch (tier) {
+      case "Platinum":
+        return "bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200"
+      case "Gold":
+        return "bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200"
+      case "Silver":
+        return "bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200"
+      default:
+        return "bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200"
+    }
+  }
+
   const handleSort = (field: SortField) => {
-    if (field === sortField) {
-      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')
+    if (sortField === field) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc")
     } else {
       setSortField(field)
-      setSortDirection('asc')
+      setSortDirection("desc")
     }
   }
 
-  // Handle exporting to CSV
-  const exportToCsv = () => {
-    const headers = ['Rank', 'Dealer', 'Total Sales', 'Order Count', 'Avg Order Value', 'Top Category', 'Last Order', 'Growth (%)']
-    
-    const csvData = sortedAndFilteredData.map((dealer) => [
-      dealer.rank,
-      dealer.dealer,
-      dealer.totalSales,
-      dealer.orderCount,
-      dealer.avgOrderValue,
-      dealer.topCategory,
-      dealer.lastOrder,
-      dealer.growth.toFixed(2)
-    ])
-    
-    const csvContent = [
-      headers.join(','),
-      ...csvData.map(row => row.join(','))
-    ].join('\n')
-    
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
-    const url = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.setAttribute('href', url)
-    link.setAttribute('download', 'dealer_rankings.csv')
-    link.style.visibility = 'hidden'
-    document.body.appendChild(link)
-    link.click()
-    document.body.removeChild(link)
+  const handlePageChange = (page: number) => {
+    setCurrentPage(Math.max(1, Math.min(page, totalPages)))
   }
 
-  // Render sort indicator
-  const renderSortIndicator = (field: SortField) => {
-    if (field !== sortField) {
-      return <ArrowUpDown className="ml-2 h-4 w-4" />
-    }
-    
-    return sortDirection === 'asc' 
-      ? <ArrowUp className="ml-2 h-4 w-4" /> 
-      : <ArrowDown className="ml-2 h-4 w-4" />
+  if (!dealerAnalytics || dealerAnalytics.length === 0) {
+    return (
+      <Card>
+        <CardContent className="flex items-center justify-center h-32">
+          <p className="text-muted-foreground">No dealer data available</p>
+        </CardContent>
+      </Card>
+    )
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-2">
-          <Search className="h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Search dealers..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-[300px]"
-          />
+    <Card>
+      <CardHeader>
+        <CardTitle>Dealer Rankings</CardTitle>
+        <CardDescription>
+          Comprehensive ranking of dealers based on various performance metrics
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        {/* Filters */}
+        <div className="flex flex-col sm:flex-row gap-4 mb-6">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+            <Input
+              placeholder="Search dealers..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+          <Select value={selectedTier} onValueChange={setSelectedTier}>
+            <SelectTrigger className="w-full sm:w-[180px]">
+              <SelectValue placeholder="Filter by tier" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Tiers</SelectItem>
+              <SelectItem value="Platinum">Platinum</SelectItem>
+              <SelectItem value="Gold">Gold</SelectItem>
+              <SelectItem value="Silver">Silver</SelectItem>
+              <SelectItem value="Bronze">Bronze</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-        <Button variant="outline" size="sm" onClick={exportToCsv}>
-          <Download className="mr-2 h-4 w-4" />
-          Export
-        </Button>
-      </div>
 
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead onClick={() => handleSort('rank')} className="w-[80px] cursor-pointer">
-                <div className="flex items-center">
-                  Rank
-                  {renderSortIndicator('rank')}
-                </div>
-              </TableHead>
-              <TableHead onClick={() => handleSort('dealer')} className="cursor-pointer">
-                <div className="flex items-center">
-                  Dealer
-                  {renderSortIndicator('dealer')}
-                </div>
-              </TableHead>
-              <TableHead onClick={() => handleSort('totalSales')} className="cursor-pointer">
-                <div className="flex items-center">
-                  Total Sales
-                  {renderSortIndicator('totalSales')}
-                </div>
-              </TableHead>
-              <TableHead onClick={() => handleSort('orderCount')} className="cursor-pointer">
-                <div className="flex items-center">
-                  Orders
-                  {renderSortIndicator('orderCount')}
-                </div>
-              </TableHead>
-              <TableHead onClick={() => handleSort('avgOrderValue')} className="cursor-pointer">
-                <div className="flex items-center">
-                  Avg. Order
-                  {renderSortIndicator('avgOrderValue')}
-                </div>
-              </TableHead>
-              <TableHead>Top Category</TableHead>
-              <TableHead>Last Order</TableHead>
-              <TableHead onClick={() => handleSort('growth')} className="cursor-pointer">
-                <div className="flex items-center">
-                  Growth
-                  {renderSortIndicator('growth')}
-                </div>
-              </TableHead>
-              <TableHead className="w-[50px]"></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {paginatedData.length === 0 ? (
+        {/* Results count */}
+        <div className="mb-4 text-sm text-muted-foreground">
+          Showing {startIndex + 1}-{Math.min(endIndex, filteredAndSortedDealers.length)} of {filteredAndSortedDealers.length} dealers
+        </div>
+
+        {/* Table */}
+        <div className="rounded-md border">
+          <Table>
+            <TableHeader>
               <TableRow>
-                <TableCell colSpan={9} className="h-24 text-center">
-                  No results found.
-                </TableCell>
+                <TableHead className="w-12">Rank</TableHead>
+                <TableHead>Dealer Name</TableHead>
+                <TableHead>
+                  <Button
+                    variant="ghost"
+                    onClick={() => handleSort("totalSales")}
+                    className="h-auto p-0 font-medium"
+                  >
+                    Total Sales
+                    {sortField === "totalSales" && (
+                      <span className="ml-1">
+                        {sortDirection === "asc" ? "↑" : "↓"}
+                      </span>
+                    )}
+                  </Button>
+                </TableHead>
+                <TableHead>
+                  <Button
+                    variant="ghost"
+                    onClick={() => handleSort("totalOrders")}
+                    className="h-auto p-0 font-medium"
+                  >
+                    Orders
+                    {sortField === "totalOrders" && (
+                      <span className="ml-1">
+                        {sortDirection === "asc" ? "↑" : "↓"}
+                      </span>
+                    )}
+                  </Button>
+                </TableHead>
+                <TableHead>
+                  <Button
+                    variant="ghost"
+                    onClick={() => handleSort("marketShare")}
+                    className="h-auto p-0 font-medium"
+                  >
+                    Market Share
+                    {sortField === "marketShare" && (
+                      <span className="ml-1">
+                        {sortDirection === "asc" ? "↑" : "↓"}
+                      </span>
+                    )}
+                  </Button>
+                </TableHead>
+                <TableHead>
+                  <Button
+                    variant="ghost"
+                    onClick={() => handleSort("loyaltyScore")}
+                    className="h-auto p-0 font-medium"
+                  >
+                    Loyalty Score
+                    {sortField === "loyaltyScore" && (
+                      <span className="ml-1">
+                        {sortDirection === "asc" ? "↑" : "↓"}
+                      </span>
+                    )}
+                  </Button>
+                </TableHead>
+                <TableHead>
+                  <Button
+                    variant="ghost"
+                    onClick={() => handleSort("growthRate")}
+                    className="h-auto p-0 font-medium"
+                  >
+                    Growth Rate
+                    {sortField === "growthRate" && (
+                      <span className="ml-1">
+                        {sortDirection === "asc" ? "↑" : "↓"}
+                      </span>
+                    )}
+                  </Button>
+                </TableHead>
+                <TableHead>
+                  <Button
+                    variant="ghost"
+                    onClick={() => handleSort("orderFrequency")}
+                    className="h-auto p-0 font-medium"
+                  >
+                    Order Frequency
+                    {sortField === "orderFrequency" && (
+                      <span className="ml-1">
+                        {sortDirection === "asc" ? "↑" : "↓"}
+                      </span>
+                    )}
+                  </Button>
+                </TableHead>
+                <TableHead>Tier</TableHead>
               </TableRow>
-            ) : (
-              paginatedData.map((dealer) => (
-                <TableRow key={dealer.id}>
-                  <TableCell className="font-medium">{dealer.rank}</TableCell>
-                  <TableCell>{dealer.dealer}</TableCell>
-                  <TableCell>{formatCurrency(dealer.totalSales)}</TableCell>
-                  <TableCell>{dealer.orderCount.toLocaleString()}</TableCell>
-                  <TableCell>{formatCurrency(dealer.avgOrderValue)}</TableCell>
-                  <TableCell>{dealer.topCategory}</TableCell>
-                  <TableCell>{dealer.lastOrder}</TableCell>
+            </TableHeader>
+            <TableBody>
+              {paginatedDealers.map((dealer, index) => (
+                <TableRow key={dealer.dealerName}>
+                  <TableCell className="font-medium">
+                    <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary text-primary-foreground text-sm font-bold">
+                      {startIndex + index + 1}
+                    </div>
+                  </TableCell>
                   <TableCell>
-                    <div className="flex items-center">
-                      {dealer.growth > 0 ? (
-                        <ArrowUp className="mr-1 h-4 w-4 text-green-500" />
-                      ) : dealer.growth < 0 ? (
-                        <ArrowDown className="mr-1 h-4 w-4 text-red-500" />
-                      ) : null}
-                      <span 
-                        className={
-                          dealer.growth > 0 
-                            ? "text-green-500" 
-                            : dealer.growth < 0 
-                              ? "text-red-500" 
-                              : ""
-                        }
+                    <div>
+                      <div className="font-medium">{dealer.dealerName}</div>
+                      <div className="text-sm text-muted-foreground">
+                        {dealer.categoryDiversity} categories
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell className="font-medium">
+                    {formatCurrency(dealer.totalSales)}
+                  </TableCell>
+                  <TableCell>{formatNumber(dealer.totalOrders)}</TableCell>
+                  <TableCell>{formatPercentage(dealer.marketShare, 2)}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center space-x-2">
+                      <span className="font-medium">{dealer.loyaltyScore}</span>
+                      <div className="w-16 h-2 bg-gray-200 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-primary"
+                          style={{ width: `${dealer.loyaltyScore}%` }}
+                        />
+                      </div>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center space-x-1">
+                      {dealer.growthRate >= 0 ? (
+                        <TrendingUp className="h-4 w-4 text-green-500" />
+                      ) : (
+                        <TrendingDown className="h-4 w-4 text-red-500" />
+                      )}
+                      <span
+                        className={`font-medium ${
+                          dealer.growthRate >= 0 ? "text-green-600" : "text-red-600"
+                        }`}
                       >
-                        {Math.abs(dealer.growth).toFixed(1)}%
+                        {formatPercentage(dealer.growthRate)}
                       </span>
                     </div>
                   </TableCell>
                   <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="sm">
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                        <DropdownMenuItem 
-                          onClick={() => navigator.clipboard.writeText(dealer.dealer)}
-                        >
-                          Copy dealer name
-                        </DropdownMenuItem>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem>View details</DropdownMenuItem>
-                        <DropdownMenuItem>View orders</DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    {dealer.orderFrequency.toFixed(1)}/month
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex items-center space-x-2">
+                      {getTierIcon(dealer.tier)}
+                      <Badge className={getTierColor(dealer.tier)}>
+                        {dealer.tier}
+                      </Badge>
+                    </div>
                   </TableCell>
                 </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </div>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
 
-      <div className="flex items-center justify-between">
-        <div className="text-sm text-muted-foreground">
-          Showing <span className="font-medium">{paginatedData.length}</span> of{" "}
-          <span className="font-medium">{sortedAndFilteredData.length}</span> dealers
-        </div>
-        <div className="flex items-center space-x-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPage(page - 1)}
-            disabled={page === 1}
-          >
-            Previous
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setPage(page + 1)}
-            disabled={page * rowsPerPage >= sortedAndFilteredData.length}
-          >
-            Next
-          </Button>
-        </div>
-      </div>
-    </div>
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between mt-6">
+            <div className="text-sm text-muted-foreground">
+              Page {currentPage} of {totalPages}
+            </div>
+            <div className="flex items-center space-x-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(currentPage - 1)}
+                disabled={currentPage === 1}
+              >
+                <ChevronLeft className="h-4 w-4" />
+                Previous
+              </Button>
+              
+              {/* Page numbers */}
+              <div className="flex items-center space-x-1">
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let pageNum: number
+                  if (totalPages <= 5) {
+                    pageNum = i + 1
+                  } else if (currentPage <= 3) {
+                    pageNum = i + 1
+                  } else if (currentPage >= totalPages - 2) {
+                    pageNum = totalPages - 4 + i
+                  } else {
+                    pageNum = currentPage - 2 + i
+                  }
+                  
+                  return (
+                    <Button
+                      key={pageNum}
+                      variant={currentPage === pageNum ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => handlePageChange(pageNum)}
+                      className="w-8 h-8 p-0"
+                    >
+                      {pageNum}
+                    </Button>
+                  )
+                })}
+              </div>
+              
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(currentPage + 1)}
+                disabled={currentPage === totalPages}
+              >
+                Next
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {filteredAndSortedDealers.length === 0 && (
+          <div className="text-center py-8 text-muted-foreground">
+            No dealers found matching your criteria
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }

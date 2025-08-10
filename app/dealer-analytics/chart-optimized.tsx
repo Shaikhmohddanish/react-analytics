@@ -1,7 +1,10 @@
 "use client"
 
-import React, { useState, useMemo } from "react"
+import React from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { useData } from "@/contexts/data-context"
+import { useFilters } from "@/contexts/filter-context"
+import { calculateDealerAnalytics, formatCurrency, formatPercentage } from "@/lib/analytics-utils"
 import {
   BarChart,
   Bar,
@@ -10,167 +13,213 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  ScatterChart,
-  Scatter,
+  LineChart,
+  Line,
+  PieChart,
+  Pie,
+  Cell,
 } from "recharts"
-import { LazyChartWrapper } from "@/components/ui/lazy-chart-wrapper"
 
-/**
- * Chart Optimized Version of Dealer Analytics
- * 
- * This component demonstrates how to implement LazyChartWrapper for performance optimization
- * while maintaining the original functionality.
- */
-export default function DealerAnalyticsOptimized() {
-  // Sample data for demonstration
-  const [dealerAnalytics, setDealerAnalytics] = useState({
-    dealerMetrics: Array.from({ length: 30 }, (_, i) => ({
-      name: `Dealer ${i + 1}`,
-      totalSales: Math.floor(Math.random() * 1000000) + 100000,
-      growthRate: Math.floor(Math.random() * 40) - 10,
-    }))
-  });
+const COLORS = ["#8884d8", "#82ca9d", "#ffc658", "#ff7300", "#ff0000"]
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat("en-IN", {
-      style: "currency",
-      currency: "INR",
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(value)
+export default function DealerAnalyticsChart() {
+  const { loading } = useData()
+  const { filteredData, hasActiveFilters } = useFilters()
+
+  // Use centralized analytics calculation with filtered data
+  const dealerAnalytics = React.useMemo(() => {
+    if (!filteredData.length) return null
+    return calculateDealerAnalytics(filteredData)
+  }, [filteredData])
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+      </div>
+    )
   }
+
+  if (!dealerAnalytics || dealerAnalytics.length === 0) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px] text-muted-foreground">
+        No dealer data available
+      </div>
+    )
+  }
+
+  // Prepare chart data
+  const topDealersData = dealerAnalytics.slice(0, 10).map((dealer, index) => ({
+    ...dealer,
+    displayName: `Dealer ${index + 1}`,
+    fullName: dealer.dealerName,
+  }))
+
+  const tierDistributionData = Object.entries(
+    dealerAnalytics.reduce((acc, dealer) => {
+      acc[dealer.tier] = (acc[dealer.tier] || 0) + 1
+      return acc
+    }, {} as Record<string, number>)
+  ).map(([tier, count]) => ({
+    name: tier,
+    value: count,
+  }))
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold">Dealer Analytics - Chart Optimized</h1>
-      <p className="text-muted-foreground">
-        This page demonstrates how charts are optimized using LazyChartWrapper
-      </p>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-responsive-lg">Sales Performance</CardTitle>
-            <CardDescription>Dealer sales comparison</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {/* 
-             * PERFORMANCE OPTIMIZATION:
-             * Using LazyChartWrapper to only render this chart when it becomes visible in the viewport.
-             * 
-             * Benefits:
-             * 1. Lazy Loading: Chart only renders when visible in viewport
-             * 2. Re-render Optimization: Uses memoization to prevent unnecessary re-renders
-             * 3. Memory Usage: Reduces memory consumption by deferring rendering
-             * 4. Initial Load: Improves page load time by deferring expensive chart rendering
-             */}
-                         <LazyChartWrapper
-               id="dealer-sales-chart"
-               className="dealer-sales-chart" 
-               data={dealerAnalytics.dealerMetrics.slice(0, 15).map((dealer, index) => ({
-                 ...dealer,
-                 displayName: `Dealer ${index + 1}`,
-                 fullName: dealer.name
-               }))}
-               title="Sales Performance"
-               height={400}
-               renderChart={({ data, height }) => (
-                 <ResponsiveContainer width="100%" height={height}>
-                   <BarChart data={data} margin={{ bottom: 60 }}>
-                     <CartesianGrid strokeDasharray="3 3" />
-                     <XAxis 
-                       dataKey="displayName" 
-                       tick={{ fontSize: 12 }} 
-                       angle={0} 
-                       textAnchor="middle" 
-                       height={50}
-                       interval={0}
-                     />
-                     <YAxis tick={{ fontSize: 12 }} tickFormatter={(value) => `₹${(value / 100000).toFixed(0)}L`} />
-                     <Tooltip
-                       formatter={(value: number, name: string, props: any) => [
-                         formatCurrency(value), 
-                         "Sales"
-                       ]}
-                       labelFormatter={(label, payload) => {
-                         if (payload && payload[0] && payload[0].payload.fullName) {
-                           return payload[0].payload.fullName;
-                         }
-                         return label;
-                       }}
-                       labelStyle={{ fontSize: "12px" }}
-                     />
-                     <Bar dataKey="totalSales" fill="hsl(var(--chart-1))" />
-                   </BarChart>
-                 </ResponsiveContainer>
-               )}
-             />
+      {/* Filter Status Indicator */}
+      {hasActiveFilters && (
+        <Card className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950">
+          <CardContent className="pt-4">
+            <div className="flex items-center space-x-2 text-blue-700 dark:text-blue-300">
+              <div className="h-4 w-4 rounded-full bg-blue-500"></div>
+              <span className="text-sm font-medium">
+                Showing analytics for {filteredData.length} filtered records
+              </span>
+            </div>
           </CardContent>
         </Card>
+      )}
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-responsive-lg">Growth vs Sales</CardTitle>
-            <CardDescription>Performance correlation analysis</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {/* 
-             * PERFORMANCE OPTIMIZATION:
-             * Using LazyChartWrapper for this scatter chart which is particularly 
-             * expensive to render due to complex data points.
-             * 
-             * This implementation:
-             * 1. Uses the enhanced LazyChartWrapper with memoization
-             * 2. Prevents re-renders when data references change but content remains the same
-             * 3. Only renders when visible in the viewport
-             * 4. Shows a loading indicator while preparing to render
-             */}
-            <LazyChartWrapper
-              id="dealer-growth-chart"
-              className="dealer-growth-chart"
-              data={dealerAnalytics.dealerMetrics}
-              title="Growth Analysis"
-              height={400}
-              renderChart={({ data, height }) => (
-                <ResponsiveContainer width="100%" height={height}>
-                  <ScatterChart data={data}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis
-                      dataKey="totalSales"
-                      tick={{ fontSize: 12 }}
-                      tickFormatter={(value) => `₹${(value / 100000).toFixed(0)}L`}
-                    />
-                    <YAxis
-                      dataKey="growthRate"
-                      tick={{ fontSize: 12 }}
-                      tickFormatter={(value) => `${value.toFixed(0)}%`}
-                    />
-                    <Tooltip
-                      formatter={(value: number, name: string) => [
-                        name === "totalSales" ? formatCurrency(value) : `${value.toFixed(1)}%`,
-                        name === "totalSales" ? "Sales" : "Growth Rate",
-                      ]}
-                      labelStyle={{ fontSize: "12px" }}
-                    />
-                    <Scatter dataKey="totalSales" fill="hsl(var(--chart-2))" />
-                  </ScatterChart>
-                </ResponsiveContainer>
-              )}
-            />
-          </CardContent>
-        </Card>
-      </div>
+      {/* Top Dealers Bar Chart */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Top 10 Dealers by Sales</CardTitle>
+          <CardDescription>Leading dealers based on total sales performance</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ResponsiveContainer width="100%" height={400}>
+            <BarChart data={topDealersData} margin={{ bottom: 60 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis 
+                dataKey="displayName" 
+                tick={{ fontSize: 12 }} 
+                angle={0} 
+                textAnchor="middle" 
+                height={50}
+                interval={0}
+              />
+              <YAxis 
+                tick={{ fontSize: 12 }} 
+                tickFormatter={(value) => `₹${(value / 100000).toFixed(0)}L`} 
+              />
+              <Tooltip
+                formatter={(value: number, name: string, props: any) => [
+                  formatCurrency(value), 
+                  "Sales"
+                ]}
+                labelFormatter={(label, payload) => {
+                  if (payload && payload[0] && payload[0].payload.fullName) {
+                    return payload[0].payload.fullName;
+                  }
+                  return label;
+                }}
+                labelStyle={{ fontSize: "12px" }}
+              />
+              <Bar dataKey="totalSales" fill="hsl(var(--chart-1))" />
+            </BarChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
 
-      <div className="mt-8 p-4 bg-muted rounded-lg">
-        <h2 className="text-lg font-semibold mb-2">LazyChartWrapper Benefits</h2>
-        <ul className="list-disc list-inside space-y-2">
-          <li><strong>Initial Load Optimization:</strong> Charts only render when they enter the viewport</li>
-          <li><strong>Re-render Optimization:</strong> Prevents unnecessary re-renders when data references change but content is the same</li>
-          <li><strong>Layout Stability:</strong> Maintains consistent layout by preserving chart height before rendering</li>
-          <li><strong>User Feedback:</strong> Shows loading indicators while charts are being prepared</li>
-          <li><strong>Memory Efficiency:</strong> Reduces memory usage by only rendering visible charts</li>
-        </ul>
-      </div>
+      {/* Tier Distribution */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Dealer Tier Distribution</CardTitle>
+          <CardDescription>Distribution of dealers across performance tiers</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ResponsiveContainer width="100%" height={300}>
+            <PieChart>
+              <Pie
+                data={tierDistributionData}
+                cx="50%"
+                cy="50%"
+                labelLine={false}
+                label={({ name, percent }) => `${name} ${((percent || 0) * 100).toFixed(0)}%`}
+                outerRadius={80}
+                fill="#8884d8"
+                dataKey="value"
+              >
+                {tierDistributionData.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                ))}
+              </Pie>
+              <Tooltip formatter={(value: number) => [value, "Dealers"]} />
+            </PieChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      {/* Growth Rate Analysis */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Growth Rate Analysis</CardTitle>
+          <CardDescription>Dealer performance growth rates</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ResponsiveContainer width="100%" height={400}>
+            <BarChart data={dealerAnalytics.slice(0, 15)} margin={{ bottom: 60 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis 
+                dataKey="dealerName" 
+                tick={{ fontSize: 10 }} 
+                angle={-45} 
+                textAnchor="end" 
+                height={80}
+                interval={0}
+              />
+              <YAxis 
+                tick={{ fontSize: 12 }} 
+                tickFormatter={(value) => `${value}%`} 
+              />
+              <Tooltip
+                formatter={(value: number) => [formatPercentage(value), "Growth Rate"]}
+                labelStyle={{ fontSize: "12px" }}
+              />
+              <Bar 
+                dataKey="growthRate" 
+                fill="#82ca9d"
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      {/* Loyalty Score Distribution */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Loyalty Score Distribution</CardTitle>
+          <CardDescription>Distribution of dealers by loyalty score levels</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={dealerAnalytics.slice(0, 20)} margin={{ bottom: 60 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis 
+                dataKey="dealerName" 
+                tick={{ fontSize: 10 }} 
+                angle={-45} 
+                textAnchor="end" 
+                height={80}
+                interval={0}
+              />
+              <YAxis 
+                tick={{ fontSize: 12 }} 
+                tickFormatter={(value) => `${value}`} 
+              />
+              <Tooltip
+                formatter={(value: number) => [value, "Loyalty Score"]}
+                labelStyle={{ fontSize: "12px" }}
+              />
+              <Bar 
+                dataKey="loyaltyScore" 
+                fill="#8884d8" 
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
     </div>
-  );
+  )
 }

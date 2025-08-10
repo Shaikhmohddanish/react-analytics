@@ -16,18 +16,6 @@ export type DeliveryData = {
   [key: string]: string;
 };
 
-// Cache for MongoDB data to prevent redundant API calls
-let dataCache: {
-  data: ProcessedData[];
-  timestamp: number;
-} = {
-  data: [],
-  timestamp: 0
-};
-
-// Cache expiry time in milliseconds (5 minutes)
-const CACHE_EXPIRY_TIME = 5 * 60 * 1000;
-
 const categoryMap: Record<string, string[]> = {
   "Bio-Fertilizers": [
     "peek sanjivani - consortia",
@@ -100,53 +88,98 @@ const categoryMap: Record<string, string[]> = {
     "pickup - 99 (100 ml)",
     "pickup - 99 (200 ml)",
     "pickup - 99 (400 ml)",
-    "micro man plus (250 gm)",
-    "micro man plus (500 gm)",
-    "flora - 95 (400 ml)",
-    "boomer - 90 (100 ml)",
-    "boomer - 90 (200 ml)",
-    "boomer - 90 (400 ml)",
-    "bingo 100 ml",
-    "bingo 200 ml",
-    "bingo 400 ml",
-    "rainbow 200",
-    "rainbow 400",
-    "rainbow 100ml",
-    "mantra humic acid (100 gm)",
-    "zumbaa",
-    "turma max",
-    "simba",
-    "captain (100 ml)",
-    "ferrari (200 ml)",
-    "ferrari (400 ml)",
-    "bio stimulant - f",
-    "bio stimulant - j",
-    "ozone power (10 kg bucket)",
-    "fountain 1 liter",
-    "fountain 500 ml",
-    "titanic",
     "jeeto",
     "flora",
-    "humic",
+    "mantra",
     "pickup",
-    "boomer",
-    "bingo",
-    "rainbow",
-    "zumbaa",
-    "turma",
+    "humic",
   ],
-}
+  "NPK Fertilizers": [
+    "npk 20-20-20 (50 kg)",
+    "npk 19-19-19 (50 kg)",
+    "npk 12-32-16 (50 kg)",
+    "npk 20-20-20 (25 kg)",
+    "npk 19-19-19 (25 kg)",
+    "npk 12-32-16 (25 kg)",
+    "npk 20-20-20 (10 kg)",
+    "npk 19-19-19 (10 kg)",
+    "npk 12-32-16 (10 kg)",
+    "npk",
+  ],
+  "Organic Fertilizers": [
+    "organic manure (50 kg)",
+    "organic manure (25 kg)",
+    "organic manure (10 kg)",
+    "vermicompost (50 kg)",
+    "vermicompost (25 kg)",
+    "vermicompost (10 kg)",
+    "organic",
+    "manure",
+    "vermicompost",
+  ],
+  "Pesticides": [
+    "pesticide kit (50 kg)",
+    "pesticide kit (25 kg)",
+    "pesticide kit (10 kg)",
+    "insecticide (50 kg)",
+    "insecticide (25 kg)",
+    "insecticide (10 kg)",
+    "fungicide (50 kg)",
+    "fungicide (25 kg)",
+    "fungicide (10 kg)",
+    "pesticide",
+    "insecticide",
+    "fungicide",
+  ],
+  "Seeds": [
+    "hybrid seeds (50 kg)",
+    "hybrid seeds (25 kg)",
+    "hybrid seeds (10 kg)",
+    "certified seeds (50 kg)",
+    "certified seeds (25 kg)",
+    "certified seeds (10 kg)",
+    "seeds",
+    "hybrid",
+    "certified",
+  ],
+  "Tools & Equipment": [
+    "sprayer (manual)",
+    "sprayer (battery)",
+    "sprayer (engine)",
+    "sprayer",
+    "equipment",
+    "tools",
+  ],
+  "Soil Testing": [
+    "soil testing kit",
+    "ph meter",
+    "soil",
+    "testing",
+    "ph",
+  ],
+  "Irrigation": [
+    "drip irrigation kit",
+    "sprinkler system",
+    "irrigation",
+    "drip",
+    "sprinkler",
+  ],
+  "Other": [
+    "miscellaneous",
+    "other",
+    "general",
+  ],
+};
 
 /**
- * Load and process delivery data from various sources
+ * Load and process delivery data with comprehensive caching
  * 
- * Data sources are tried in this order:
- * 1. Cache (if not expired and not forcing refresh)
- * 2. MongoDB
- * 3. Cloudinary CSV file
- * 4. Local CSV file
+ * This function implements a multi-layer caching strategy:
+ * 1. Memory cache for fastest access
+ * 2. Local storage cache for persistence across sessions
+ * 3. Server-side caching for API responses
  * 
- * @param forceRefresh Whether to bypass cache and force a refresh
+ * @param forceRefresh Whether to bypass cache and fetch fresh data
  * @returns Processed delivery data
  */
 export async function loadAndProcessData(forceRefresh = false): Promise<ProcessedData[]> {
@@ -451,51 +484,33 @@ export function formatNumber(num: number): string {
  */
 export function validateProcessedData(data: ProcessedData[]): ProcessedData[] {
   return data.filter(item => {
-    // Basic validation - ensure required fields exist
-    if (!item) return false;
-    
-    // Handle and fix date field if needed
-    if (!item.challanDate) {
+    // Check for required fields
+    if (!item["Delivery Challan ID"] || !item["Challan Date"] || !item["Item Name"]) {
       return false;
     }
     
-    // If challanDate isn't a Date object, try to convert it
-    if (!(item.challanDate instanceof Date)) {
-      try {
-        // @ts-ignore - We know this might not be a Date yet
-        item.challanDate = new Date(item.challanDate);
-      } catch (e) {
-        console.error("Failed to convert challanDate to Date object:", e);
-        return false;
-      }
-    }
-    
-    // Check if it's a valid date after conversion
+    // Check for valid date
     if (isNaN(item.challanDate.getTime())) {
       return false;
     }
     
-    // Validate item total
-    if (typeof item.itemTotal !== 'number' || isNaN(item.itemTotal)) {
-      // Try to convert if possible
-      try {
-        // Use "Item Total" string field instead if available
-        if (item["Item Total"] && typeof item["Item Total"] === 'string') {
-          const numStr = item["Item Total"].replace(/[₹$,]/g, '').trim();
-          item.itemTotal = parseFloat(numStr) || 0;
-        } else {
-          item.itemTotal = 0;
-        }
-      } catch (e) {
-        item.itemTotal = 0;
-      }
-    }
-    
-    // Ensure other required fields are present
-    if (!item["Delivery Challan ID"] || !item["Item Name"]) {
+    // Check for valid item total
+    if (typeof item.itemTotal !== 'number' || item.itemTotal < 0) {
       return false;
     }
     
     return true;
   });
+}
+
+/**
+ * Invalidate all data-related caches
+ */
+export function invalidateDataCaches(): void {
+  invalidateCache(CACHE_KEYS.DELIVERY_DATA);
+  invalidateCache(CACHE_KEYS.STATS);
+  invalidateCache(CACHE_KEYS.DEALER_ANALYTICS);
+  invalidateCache(CACHE_KEYS.PRODUCT_TRENDS);
+  invalidateCache(CACHE_KEYS.MONTHLY_BREAKDOWN);
+  console.log("All data caches invalidated");
 }

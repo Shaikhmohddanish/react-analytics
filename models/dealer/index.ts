@@ -1,285 +1,231 @@
 /**
- * Models for Dealer Performance Dashboard
+ * Dealer Analytics Models and Utilities
+ * 
+ * This file contains dealer-specific data models and utilities that work with
+ * the centralized analytics system.
  */
 
-import { ProcessedData } from "@/models";
+import { ProcessedData } from "@/models"
+import { calculateDealerAnalytics, DealerAnalytics } from "@/lib/analytics-utils"
 
 /**
- * Dealer performance metrics
+ * Legacy function - now uses centralized analytics
+ * @deprecated Use calculateDealerAnalytics from @/lib/analytics-utils instead
  */
-export interface DealerMetrics {
-  dealerName: string;
-  totalSales: number;
-  orderCount: number;
-  avgOrderValue: number;
-  topCategory: string;
-  topCategorySales: number;
-  monthlySales: Record<string, number>;
-  categorySales: Record<string, number>;
-  performance?: {
-    month: string;
-    sales: number;
-  }[];
-  year: number;
+export function calculateDealerMetrics(data: ProcessedData[]) {
+  console.warn('calculateDealerMetrics is deprecated. Use calculateDealerAnalytics from @/lib/analytics-utils instead.')
+  return calculateDealerAnalytics(data)
 }
 
 /**
- * Dealer ranking table entry
+ * Generate dealer rankings with additional metadata
  */
-export interface DealerRankingEntry {
-  id: string;
-  rank: number;
-  dealer: string;
-  totalSales: number;
-  orderCount: number;
-  avgOrderValue: number;
-  topCategory: string;
-  lastOrder: string;
-  growth: number;
-}
+export function generateDealerRankings(dealerAnalytics: DealerAnalytics[], data: ProcessedData[]) {
+  if (!dealerAnalytics.length) return []
 
-/**
- * Dealer type filter options
- */
-export type DealerType = "all" | "highVolume" | "midVolume" | "lowVolume";
+  // Create a map for last order dates
+  const lastOrderMap: Record<string, Date> = {}
 
-/**
- * Chart types for dealer performance
- */
-export type DealerChartType = 
-  | "topDealers" 
-  | "categoryDistribution" 
-  | "monthlyTrends" 
-  | "weeklyTrends" 
-  | "categoryByDealer";
-
-/**
- * Calculate dealer metrics from processed data
- */
-export function calculateDealerMetrics(data: ProcessedData[]): DealerMetrics[] {
-  if (!data.length) return [];
-
-  // Group data by dealer
-  const dealerMap: Record<string, ProcessedData[]> = {};
-  
+  // Calculate last order date for each dealer
   data.forEach(item => {
-    const dealerName = item["Customer Name"];
-    if (!dealerName) return;
+    const dealerName = item["Customer Name"]
+    if (!dealerName || !item.challanDate) return
     
-    if (!dealerMap[dealerName]) {
-      dealerMap[dealerName] = [];
-    }
-    
-    dealerMap[dealerName].push(item);
-  });
-  
-  // Calculate metrics for each dealer
-  return Object.entries(dealerMap).map(([dealerName, items]) => {
-    // Calculate total sales
-    const totalSales = items.reduce((sum, item) => {
-      const amount = typeof item.totalAmount === 'number' ? item.totalAmount : 
-                    typeof item.itemTotal === 'number' ? item.itemTotal : 0;
-      return sum + amount;
-    }, 0);
-    
-    // Count unique orders
-    const uniqueOrders = new Set(items.map(item => item["Delivery Challan Number"])).size;
-    
-    // Calculate average order value
-    const avgOrderValue = uniqueOrders > 0 ? totalSales / uniqueOrders : 0;
-    
-    // Calculate sales by category
-    const categorySales: Record<string, number> = {};
-    items.forEach(item => {
-      const category = item.category || 'Uncategorized';
-      const amount = typeof item.totalAmount === 'number' ? item.totalAmount : 
-                    typeof item.itemTotal === 'number' ? item.itemTotal : 0;
-      categorySales[category] = (categorySales[category] || 0) + amount;
-    });
-    
-    // Find top category
-    let topCategory = 'Uncategorized';
-    let topCategorySales = 0;
-    
-    Object.entries(categorySales).forEach(([category, sales]) => {
-      if (sales > topCategorySales) {
-        topCategory = category;
-        topCategorySales = sales;
+    // Ensure challanDate is a proper Date object
+    let itemDate: Date
+    if (item.challanDate instanceof Date) {
+      itemDate = item.challanDate
+    } else {
+      try {
+        itemDate = new Date(item.challanDate)
+        if (isNaN(itemDate.getTime())) {
+          return // Skip invalid dates
+        }
+      } catch (e) {
+        return // Skip if date parsing fails
       }
-    });
+    }
     
-    // Calculate monthly sales
-    const monthlySales: Record<string, number> = {};
-    items.forEach(item => {
-      const month = item.month || 'Unknown';
-      const amount = typeof item.totalAmount === 'number' ? item.totalAmount : 
-                    typeof item.itemTotal === 'number' ? item.itemTotal : 0;
-      monthlySales[month] = (monthlySales[month] || 0) + amount;
-    });
-    
-    // Performance over time
-    const performance = Object.entries(monthlySales)
-      .map(([month, sales]) => ({ month, sales }))
-      .sort((a, b) => {
-        const monthOrder = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-        return monthOrder.indexOf(a.month) - monthOrder.indexOf(b.month);
-      });
-    
-    // Get the most common year
-    const yearCounts: Record<number, number> = {};
-    items.forEach(item => {
-      if (item.year) {
-        yearCounts[item.year] = (yearCounts[item.year] || 0) + 1;
-      }
-    });
-    
-    const year = Object.entries(yearCounts)
-      .sort(([, a], [, b]) => b - a)[0]?.[0] || new Date().getFullYear();
-    
-    return {
-      dealerName,
-      totalSales,
-      orderCount: uniqueOrders,
-      avgOrderValue,
-      topCategory,
-      topCategorySales,
-      monthlySales,
-      categorySales,
-      performance,
-      year: Number(year),
-    };
-  }).sort((a, b) => b.totalSales - a.totalSales);
-}
+    if (!lastOrderMap[dealerName] || itemDate > lastOrderMap[dealerName]) {
+      lastOrderMap[dealerName] = itemDate
+    }
+  })
 
-/**
- * Generate dealer ranking data
- */
-export function generateDealerRankings(metrics: DealerMetrics[], data: ProcessedData[]): DealerRankingEntry[] {
-  if (!metrics.length) return [];
-  
-  // Create a map of last order dates
-  const lastOrderMap: Record<string, Date> = {};
-  
-  data.forEach(item => {
-    const dealerName = item["Customer Name"];
-    if (!dealerName || !item.challanDate) return;
+  // Generate rankings with additional metadata
+  return dealerAnalytics.map((dealer, index) => {
+    // Format last order date - ensure it's a proper Date object
+    let lastOrderDate = 'N/A'
+    const lastOrderDateObj = lastOrderMap[dealer.dealerName]
     
-    if (!lastOrderMap[dealerName] || item.challanDate > lastOrderMap[dealerName]) {
-      lastOrderMap[dealerName] = item.challanDate;
+    if (lastOrderDateObj && lastOrderDateObj instanceof Date && !isNaN(lastOrderDateObj.getTime())) {
+      try {
+        lastOrderDate = lastOrderDateObj.toLocaleDateString('en-IN', { 
+          day: '2-digit', 
+          month: 'short', 
+          year: 'numeric' 
+        })
+      } catch (e) {
+        console.warn('Error formatting date for dealer:', dealer.dealerName, e)
+        lastOrderDate = 'N/A'
+      }
     }
-  });
-  
-  // Get the previous year for growth calculation
-  const currentYear = new Date().getFullYear();
-  const previousYear = currentYear - 1;
-  
-  // Group data by dealer and year for growth calculation
-  const dealerYearMap: Record<string, Record<number, number>> = {};
-  
-  data.forEach(item => {
-    const dealerName = item["Customer Name"];
-    if (!dealerName || !item.year) return;
-    
-    if (!dealerYearMap[dealerName]) {
-      dealerYearMap[dealerName] = {};
-    }
-    
-    const year = item.year;
-    const amount = typeof item.totalAmount === 'number' ? item.totalAmount : 
-                  typeof item.itemTotal === 'number' ? item.itemTotal : 0;
-    dealerYearMap[dealerName][year] = (dealerYearMap[dealerName][year] || 0) + amount;
-  });
-  
-  // Generate rankings
-  return metrics.map((dealer, index) => {
-    // Calculate growth rate
-    const currentYearSales = dealerYearMap[dealer.dealerName]?.[currentYear] || 0;
-    const previousYearSales = dealerYearMap[dealer.dealerName]?.[previousYear] || 0;
-    
-    const growth = previousYearSales > 0 
-      ? ((currentYearSales - previousYearSales) / previousYearSales) * 100 
-      : 0;
-    
-    // Format last order date
-    const lastOrderDate = lastOrderMap[dealer.dealerName] 
-      ? lastOrderMap[dealer.dealerName].toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) 
-      : 'N/A';
-    
+
     return {
-      id: `dealer-${index}`,
+      id: `${dealer.dealerName}-${index}`,
       rank: index + 1,
       dealer: dealer.dealerName,
       totalSales: dealer.totalSales,
-      orderCount: dealer.orderCount,
+      orderCount: dealer.totalOrders,
       avgOrderValue: dealer.avgOrderValue,
-      topCategory: dealer.topCategory,
+      marketShare: dealer.marketShare,
+      loyaltyScore: dealer.loyaltyScore,
+      growthRate: dealer.growthRate,
+      tier: dealer.tier,
+      categoryDiversity: dealer.categoryDiversity,
+      orderFrequency: dealer.orderFrequency,
       lastOrder: lastOrderDate,
-      growth,
-    };
-  });
+      topCategory: Object.entries(dealer.categoryBreakdown)
+        .sort(([, a], [, b]) => b.sales - a.sales)[0]?.[0] || 'N/A',
+      growth: dealer.growthRate, // Legacy field for backward compatibility
+    }
+  })
 }
 
 /**
- * Get dealer types based on sales volume
+ * Get dealer performance summary
  */
-export function getDealerType(dealer: DealerMetrics, allDealers: DealerMetrics[]): DealerType {
-  // Sort dealers by total sales
-  const sortedDealers = [...allDealers].sort((a, b) => b.totalSales - a.totalSales);
-  
-  // Determine thresholds for high, mid, and low volume
-  const totalDealers = sortedDealers.length;
-  const highVolumeThreshold = Math.floor(totalDealers * 0.2); // Top 20%
-  const midVolumeThreshold = Math.floor(totalDealers * 0.6); // Top 60%
-  
-  // Find the index of the current dealer
-  const dealerIndex = sortedDealers.findIndex(d => d.dealerName === dealer.dealerName);
-  
-  if (dealerIndex < highVolumeThreshold) {
-    return "highVolume";
-  } else if (dealerIndex < midVolumeThreshold) {
-    return "midVolume";
-  } else {
-    return "lowVolume";
+export function getDealerPerformanceSummary(dealerAnalytics: DealerAnalytics[]) {
+  if (!dealerAnalytics.length) {
+    return {
+      totalDealers: 0,
+      totalSales: 0,
+      avgLoyaltyScore: 0,
+      topPerformer: null,
+      tierDistribution: {},
+      growthLeaders: [],
+      loyaltyLeaders: [],
+    }
+  }
+
+  const totalDealers = dealerAnalytics.length
+  const totalSales = dealerAnalytics.reduce((sum, dealer) => sum + dealer.totalSales, 0)
+  const avgLoyaltyScore = Math.round(dealerAnalytics.reduce((sum, dealer) => sum + dealer.loyaltyScore, 0) / totalDealers)
+  const topPerformer = dealerAnalytics[0]
+
+  // Tier distribution
+  const tierDistribution = dealerAnalytics.reduce((acc, dealer) => {
+    acc[dealer.tier] = (acc[dealer.tier] || 0) + 1
+    return acc
+  }, {} as Record<string, number>)
+
+  // Growth leaders (top 5)
+  const growthLeaders = [...dealerAnalytics]
+    .sort((a, b) => b.growthRate - a.growthRate)
+    .slice(0, 5)
+
+  // Loyalty leaders (top 5)
+  const loyaltyLeaders = [...dealerAnalytics]
+    .sort((a, b) => b.loyaltyScore - a.loyaltyScore)
+    .slice(0, 5)
+
+  return {
+    totalDealers,
+    totalSales,
+    avgLoyaltyScore,
+    topPerformer,
+    tierDistribution,
+    growthLeaders,
+    loyaltyLeaders,
   }
 }
 
 /**
- * Filter dealers by type
+ * Filter dealers by criteria
  */
-export function filterDealersByType(
-  dealers: DealerMetrics[], 
-  dealerType: DealerType
-): DealerMetrics[] {
-  if (dealerType === "all") {
-    return dealers;
+export function filterDealers(
+  dealerAnalytics: DealerAnalytics[],
+  filters: {
+    tier?: string
+    minLoyaltyScore?: number
+    minMarketShare?: number
+    searchTerm?: string
   }
-  
-  return dealers.filter(dealer => getDealerType(dealer, dealers) === dealerType);
+) {
+  return dealerAnalytics.filter(dealer => {
+    if (filters.tier && dealer.tier !== filters.tier) return false
+    if (filters.minLoyaltyScore && dealer.loyaltyScore < filters.minLoyaltyScore) return false
+    if (filters.minMarketShare && dealer.marketShare < filters.minMarketShare) return false
+    if (filters.searchTerm && !dealer.dealerName.toLowerCase().includes(filters.searchTerm.toLowerCase())) return false
+    return true
+  })
 }
 
 /**
- * Format currency (INR)
+ * Get dealer insights and recommendations
  */
-export function formatCurrency(amount: number): string {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0
-  }).format(amount);
-}
+export function getDealerInsights(dealerAnalytics: DealerAnalytics[]) {
+  if (!dealerAnalytics.length) return []
 
-/**
- * Format number with K, M, B suffixes
- */
-export function formatNumber(value: number): string {
-  if (value >= 1000000000) {
-    return (value / 1000000000).toFixed(1) + 'B';
-  } else if (value >= 1000000) {
-    return (value / 1000000).toFixed(1) + 'M';
-  } else if (value >= 1000) {
-    return (value / 1000).toFixed(1) + 'K';
-  } else {
-    return value.toFixed(0);
-  }
+  return dealerAnalytics.map(dealer => {
+    const insights = []
+
+    // Growth insights
+    if (dealer.growthRate > 20) {
+      insights.push({
+        type: 'positive',
+        category: 'growth',
+        message: `Strong growth of ${dealer.growthRate.toFixed(1)}% - consider expanding relationship`
+      })
+    } else if (dealer.growthRate < -10) {
+      insights.push({
+        type: 'warning',
+        category: 'growth',
+        message: `Declining growth of ${dealer.growthRate.toFixed(1)}% - needs attention`
+      })
+    }
+
+    // Loyalty insights
+    if (dealer.loyaltyScore >= 70) {
+      insights.push({
+        type: 'positive',
+        category: 'loyalty',
+        message: `High loyalty score of ${dealer.loyaltyScore} - excellent relationship`
+      })
+    } else if (dealer.loyaltyScore < 30) {
+      insights.push({
+        type: 'warning',
+        category: 'loyalty',
+        message: `Low loyalty score of ${dealer.loyaltyScore} - needs engagement`
+      })
+    }
+
+    // Market share insights
+    if (dealer.marketShare > 5) {
+      insights.push({
+        type: 'positive',
+        category: 'market',
+        message: `High market share of ${dealer.marketShare.toFixed(2)}% - key account`
+      })
+    }
+
+    // Category diversity insights
+    if (dealer.categoryDiversity >= 5) {
+      insights.push({
+        type: 'positive',
+        category: 'diversity',
+        message: `Diverse portfolio with ${dealer.categoryDiversity} categories`
+      })
+    } else if (dealer.categoryDiversity <= 2) {
+      insights.push({
+        type: 'info',
+        category: 'diversity',
+        message: `Limited to ${dealer.categoryDiversity} categories - opportunity for expansion`
+      })
+    }
+
+    return {
+      dealerName: dealer.dealerName,
+      insights
+    }
+  })
 }

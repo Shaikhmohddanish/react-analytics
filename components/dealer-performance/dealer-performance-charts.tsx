@@ -1,420 +1,313 @@
 "use client"
 
-import React, { useMemo, useState } from "react"
+import React from "react"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { DealerAnalytics } from "@/lib/analytics-utils"
+import { formatCurrency, formatPercentage } from "@/lib/analytics-utils"
 import {
   BarChart,
   Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
   LineChart,
   Line,
   PieChart,
   Pie,
   Cell,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-  TooltipProps,
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  Radar,
 } from "recharts"
-import { Card, CardContent } from "@/components/ui/card"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Button } from "@/components/ui/button"
-import { ChevronLeft, ChevronRight } from "lucide-react"
-import { calculateDealerMetrics, formatCurrency } from "@/models/dealer"
-import { ProcessedData } from "@/models"
-import { DealerChartType } from "@/models/dealer"
 
 interface DealerPerformanceChartsProps {
-  data: ProcessedData[]
-  chartType: DealerChartType
-  height?: number
+  dealerAnalytics: DealerAnalytics[] | null
 }
 
-export default function DealerPerformanceCharts({ data, chartType, height = 400 }: DealerPerformanceChartsProps) {
-  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear())
-  const [selectedDealer, setSelectedDealer] = useState<string>("all")
-  
-  // Calculate dealer metrics
-  const metrics = useMemo(() => {
-    return calculateDealerMetrics(data)
-  }, [data])
-  
-  // Get available years
-  const availableYears = useMemo(() => {
-    const years = new Set<number>();
-    data.forEach(item => {
-      if (item.year) {
-        years.add(item.year);
-      }
-    });
-    return Array.from(years).sort((a, b) => b - a);
-  }, [data]);
+const COLORS = ["#8884d8", "#82ca9d", "#ffc658", "#ff7300", "#ff0000"]
 
-  // Get all dealer names
-  const dealerNames = useMemo(() => {
-    return metrics.map(dealer => dealer.dealerName);
-  }, [metrics]);
+export default function DealerPerformanceCharts({ dealerAnalytics }: DealerPerformanceChartsProps) {
+  if (!dealerAnalytics || dealerAnalytics.length === 0) {
+    return (
+      <Card>
+        <CardContent className="flex items-center justify-center h-32">
+          <p className="text-muted-foreground">No dealer data available</p>
+        </CardContent>
+      </Card>
+    )
+  }
 
-  // Navigate between years
-  const navigateYear = (direction: "prev" | "next") => {
-    const currentIndex = availableYears.indexOf(selectedYear);
-    if (direction === "prev" && currentIndex < availableYears.length - 1) {
-      setSelectedYear(availableYears[currentIndex + 1]);
-    } else if (direction === "next" && currentIndex > 0) {
-      setSelectedYear(availableYears[currentIndex - 1]);
-    }
-  };
+  // Prepare chart data
+  const topDealersData = dealerAnalytics.slice(0, 10).map((dealer, index) => ({
+    ...dealer,
+    displayName: `Dealer ${index + 1}`,
+    fullName: dealer.dealerName,
+  }))
 
-  // Filter metrics by selected year
-  const filteredMetrics = useMemo(() => {
-    return metrics.filter(dealer => dealer.year === selectedYear);
-  }, [metrics, selectedYear]);
+  const tierDistributionData = Object.entries(
+    dealerAnalytics.reduce((acc, dealer) => {
+      acc[dealer.tier] = (acc[dealer.tier] || 0) + 1
+      return acc
+    }, {} as Record<string, number>)
+  ).map(([tier, count]) => ({
+    name: tier,
+    value: count,
+  }))
 
-  // Filter by selected dealer if needed
-  const filteredByDealer = useMemo(() => {
-    if (selectedDealer === "all") {
-      return filteredMetrics;
-    }
-    return filteredMetrics.filter(dealer => dealer.dealerName === selectedDealer);
-  }, [filteredMetrics, selectedDealer]);
+  const loyaltyDistributionData = [
+    { name: "High (50+)", value: dealerAnalytics.filter(d => d.loyaltyScore >= 50).length },
+    { name: "Medium (30-49)", value: dealerAnalytics.filter(d => d.loyaltyScore >= 30 && d.loyaltyScore < 50).length },
+    { name: "Low (<30)", value: dealerAnalytics.filter(d => d.loyaltyScore < 30).length },
+  ]
 
-  // Top dealers chart data
-  const topDealersData = useMemo(() => {
-    return filteredMetrics
-      .slice(0, 10)
-      .map(dealer => ({
-        name: dealer.dealerName,
-        value: dealer.totalSales,
-      }))
-      .sort((a, b) => b.value - a.value);
-  }, [filteredMetrics]);
-
-  // Category distribution data
-  const categoryDistributionData = useMemo(() => {
-    const categorySales: Record<string, number> = {};
-    
-    filteredMetrics.forEach(dealer => {
-      Object.entries(dealer.categorySales).forEach(([category, sales]) => {
-        categorySales[category] = (categorySales[category] || 0) + sales;
-      });
-    });
-    
-    return Object.entries(categorySales)
-      .map(([name, value]) => ({ name, value }))
-      .filter(item => item.value > 0)
-      .sort((a, b) => b.value - a.value);
-  }, [filteredMetrics]);
-
-  // Monthly trends data
-  const monthlyTrendsData = useMemo(() => {
-    const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    const monthData: Record<string, number> = {};
-    
-    // Initialize all months with zero
-    monthNames.forEach(month => {
-      monthData[month] = 0;
-    });
-    
-    // Sum sales by month for selected dealers
-    filteredByDealer.forEach(dealer => {
-      Object.entries(dealer.monthlySales).forEach(([month, sales]) => {
-        monthData[month] = (monthData[month] || 0) + sales;
-      });
-    });
-    
-    // Convert to array and sort by month
-    return monthNames.map(month => ({
-      name: month,
-      sales: monthData[month] || 0,
-    }));
-  }, [filteredByDealer]);
-
-  // Category by dealer data
-  const categoryByDealerData = useMemo(() => {
-    if (filteredByDealer.length === 0) return [];
-    
-    // If all dealers selected, take top 5
-    const dealersToShow = selectedDealer === "all" 
-      ? filteredByDealer.slice(0, 5) 
-      : filteredByDealer;
-    
-    // Get all unique categories across all dealers
-    const allCategories = new Set<string>();
-    dealersToShow.forEach(dealer => {
-      if (dealer && dealer.categorySales) {
-        Object.keys(dealer.categorySales).forEach(category => {
-          allCategories.add(category);
-        });
-      }
-    });
-    
-    // Create data for chart, ensuring all dealers have all categories (even if zero)
-    return dealersToShow.map(dealer => {
-      const result: Record<string, any> = { name: dealer.dealerName };
-      
-      // Add all categories to each dealer's data, defaulting to 0 if not present
-      Array.from(allCategories).forEach(category => {
-        result[category] = dealer.categorySales && dealer.categorySales[category] 
-          ? dealer.categorySales[category] 
-          : 0;
-      });
-      
-      return result;
-    });
-  }, [filteredByDealer, selectedDealer]);
-
-  // Weekly trends data - placeholder, would need to calculate from actual data
-  const weeklyTrendsData = useMemo(() => {
-    // This is a placeholder. In a real application, you'd calculate this from your data
-    // For now, we'll generate some example data
-    const weeks = Array.from({ length: 12 }, (_, i) => `Week ${i + 1}`);
-    
-    return weeks.map(week => ({
-      name: week,
-      sales: Math.floor(Math.random() * 500000) + 100000,
-    }));
-  }, []);
-
-  // Custom tooltip for charts
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload && payload.length) {
-      return (
-        <Card className="border p-2 shadow-md bg-background">
-          <CardContent className="p-2">
-            <p className="font-bold">{label || 'N/A'}</p>
-            {payload.map((entry: any, index: number) => (
-              <div key={`item-${index}`} className="flex items-center gap-2">
-                <div
-                  className="w-3 h-3 rounded-full"
-                  style={{ backgroundColor: entry.color }}
-                />
-                <span>
-                  {entry.name || 'Unknown'}: {formatCurrency(entry.value as number)}
-                </span>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      );
-    }
-    return null;
-  };
-
-  // Generate random colors
-  const COLORS = useMemo(() => {
-    return [
-      '#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8',
-      '#82ca9d', '#ffc658', '#8dd1e1', '#a4de6c', '#d0ed57'
-    ];
-  }, []);
-
-  // Render chart based on type
-  const renderChart = () => {
-    switch (chartType) {
-      case "topDealers":
-        return (
-          <ResponsiveContainer width="100%" height={height}>
-            <BarChart
-              data={topDealersData}
-              layout="vertical"
-              margin={{ top: 20, right: 30, left: 100, bottom: 5 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} />
-              <XAxis type="number" tickFormatter={(value) => formatCurrency(value)} />
-              <YAxis 
-                dataKey="name" 
-                type="category" 
-                tick={{ fontSize: 12 }}
-                width={100}
-              />
-              <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="value" fill="#0088FE" name="Sales">
-                {topDealersData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        );
-      
-      case "categoryDistribution":
-        return (
-          <ResponsiveContainer width="100%" height={height}>
-            <PieChart>
-              <Pie
-                data={categoryDistributionData}
-                cx="50%"
-                cy="50%"
-                labelLine={false}
-                outerRadius={height / 3}
-                fill="#8884d8"
-                dataKey="value"
-                nameKey="name"
-                label={({ name, percent }: { name: string; percent?: number }) => 
-                  `${name} ${percent ? (percent * 100).toFixed(0) : '0'}%`
-                }
-              >
-                {categoryDistributionData.map((entry, index) => (
-                  <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                ))}
-              </Pie>
-              <Tooltip formatter={(value) => formatCurrency(value as number)} />
-              <Legend />
-            </PieChart>
-          </ResponsiveContainer>
-        );
-      
-      case "monthlyTrends":
-        return (
-          <ResponsiveContainer width="100%" height={height}>
-            <LineChart
-              data={monthlyTrendsData}
-              margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="name" />
-              <YAxis tickFormatter={(value) => formatCurrency(value)} />
-              <Tooltip content={<CustomTooltip />} />
-              <Legend />
-              <Line
-                type="monotone"
-                dataKey="sales"
-                name="Sales"
-                stroke="#0088FE"
-                strokeWidth={2}
-                dot={{ r: 4 }}
-                activeDot={{ r: 6 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        );
-      
-      case "weeklyTrends":
-        return (
-          <ResponsiveContainer width="100%" height={height}>
-            <LineChart
-              data={weeklyTrendsData}
-              margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="name" />
-              <YAxis tickFormatter={(value) => formatCurrency(value)} />
-              <Tooltip content={<CustomTooltip />} />
-              <Legend />
-              <Line
-                type="monotone"
-                dataKey="sales"
-                name="Sales"
-                stroke="#00C49F"
-                strokeWidth={2}
-                dot={{ r: 4 }}
-                activeDot={{ r: 6 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        );
-      
-      case "categoryByDealer":
-        return (
-          <ResponsiveContainer width="100%" height={height}>
-            <BarChart
-              data={categoryByDealerData}
-              margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-            >
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="name" />
-              <YAxis tickFormatter={(value) => formatCurrency(value)} />
-              <Tooltip content={<CustomTooltip />} />
-              <Legend />
-              {categoryByDealerData.length > 0 && Array.from(
-                new Set(
-                  categoryByDealerData.flatMap(item => 
-                    Object.keys(item).filter(key => key !== 'name')
-                  )
-                )
-              ).map((category, index) => (
-                <Bar
-                  key={`category-${index}`}
-                  dataKey={category}
-                  stackId="a"
-                  fill={COLORS[index % COLORS.length]}
-                  name={category}
-                />
-              ))}
-            </BarChart>
-          </ResponsiveContainer>
-        );
-      
-      default:
-        return (
-          <div className="flex items-center justify-center h-full">
-            <p>Select a chart type to display</p>
-          </div>
-        );
-    }
-  };
+  const topDealer = dealerAnalytics[0]
+  const radarData = topDealer ? [
+    { subject: "Sales Volume", A: Math.min(100, (topDealer.marketShare / 10) * 100) },
+    { subject: "Order Frequency", A: Math.min(100, (topDealer.orderFrequency / 5) * 100) },
+    { subject: "Category Diversity", A: Math.min(100, (topDealer.categoryDiversity / 6) * 100) },
+    { subject: "Loyalty Score", A: topDealer.loyaltyScore },
+    { subject: "Growth Rate", A: Math.min(100, Math.max(0, topDealer.growthRate + 50)) },
+    { subject: "Avg Order Value", A: Math.min(100, (topDealer.avgOrderValue / 50000) * 100) },
+  ] : []
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => navigateYear("prev")}
-            disabled={availableYears.indexOf(selectedYear) === availableYears.length - 1}
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          
-          <Select
-            value={selectedYear.toString()}
-            onValueChange={(value) => setSelectedYear(parseInt(value))}
-          >
-            <SelectTrigger className="w-[100px]">
-              <SelectValue placeholder="Year" />
-            </SelectTrigger>
-            <SelectContent>
-              {availableYears.map((year) => (
-                <SelectItem key={year} value={year.toString()}>
-                  {year}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => navigateYear("next")}
-            disabled={availableYears.indexOf(selectedYear) === 0}
-          >
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-        </div>
-        
-        {(chartType === "monthlyTrends" || chartType === "weeklyTrends" || chartType === "categoryByDealer") && (
-          <Select
-            value={selectedDealer}
-            onValueChange={setSelectedDealer}
-          >
-            <SelectTrigger className="w-[200px]">
-              <SelectValue placeholder="Select Dealer" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Dealers</SelectItem>
-              {dealerNames.map((dealer) => (
-                <SelectItem key={dealer} value={dealer}>
-                  {dealer}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
+    <div className="space-y-6">
+      {/* Top Dealers Bar Chart */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Top 10 Dealers by Sales</CardTitle>
+          <CardDescription>Leading dealers based on total sales performance</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ResponsiveContainer width="100%" height={400}>
+            <BarChart data={topDealersData} margin={{ bottom: 60 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis 
+                dataKey="displayName" 
+                tick={{ fontSize: 12 }} 
+                angle={0} 
+                textAnchor="middle" 
+                height={50}
+                interval={0}
+              />
+              <YAxis 
+                tick={{ fontSize: 12 }} 
+                tickFormatter={(value) => `₹${(value / 100000).toFixed(0)}L`} 
+              />
+              <Tooltip
+                formatter={(value: number, name: string, props: any) => [
+                  formatCurrency(value), 
+                  "Sales"
+                ]}
+                labelFormatter={(label, payload) => {
+                  if (payload && payload[0] && payload[0].payload.fullName) {
+                    return payload[0].payload.fullName;
+                  }
+                  return label;
+                }}
+                labelStyle={{ fontSize: "12px" }}
+              />
+              <Bar dataKey="totalSales" fill="hsl(var(--chart-1))" />
+            </BarChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      {/* Tier Distribution */}
+      <div className="grid gap-6 md:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Dealer Tier Distribution</CardTitle>
+            <CardDescription>Distribution of dealers across performance tiers</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie
+                  data={tierDistributionData}
+                  cx="50%"
+                  cy="50%"
+                  labelLine={false}
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  outerRadius={80}
+                  fill="#8884d8"
+                  dataKey="value"
+                >
+                  {tierDistributionData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value: number) => [value, "Dealers"]} />
+              </PieChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Loyalty Score Distribution</CardTitle>
+            <CardDescription>Distribution of dealers by loyalty score levels</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <PieChart>
+                <Pie
+                  data={loyaltyDistributionData}
+                  cx="50%"
+                  cy="50%"
+                  labelLine={false}
+                  label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                  outerRadius={80}
+                  fill="#8884d8"
+                  dataKey="value"
+                >
+                  {loyaltyDistributionData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip formatter={(value: number) => [value, "Dealers"]} />
+              </PieChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
       </div>
-      
-      {renderChart()}
+
+      {/* Growth Rate Analysis */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Growth Rate Analysis</CardTitle>
+          <CardDescription>Dealer performance growth rates</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ResponsiveContainer width="100%" height={400}>
+            <BarChart data={dealerAnalytics.slice(0, 15)} margin={{ bottom: 60 }}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis 
+                dataKey="dealerName" 
+                tick={{ fontSize: 10 }} 
+                angle={-45} 
+                textAnchor="end" 
+                height={80}
+                interval={0}
+              />
+              <YAxis 
+                tick={{ fontSize: 12 }} 
+                tickFormatter={(value) => `${value}%`} 
+              />
+              <Tooltip
+                formatter={(value: number) => [formatPercentage(value), "Growth Rate"]}
+                labelStyle={{ fontSize: "12px" }}
+              />
+              <Bar 
+                dataKey="growthRate" 
+                fill={(entry: any) => entry.growthRate >= 0 ? "#82ca9d" : "#ff6b6b"} 
+              />
+            </BarChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      {/* Top Dealer Performance Radar */}
+      {topDealer && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Top Dealer Performance Profile</CardTitle>
+            <CardDescription>Comprehensive performance analysis of the top dealer</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-6 md:grid-cols-2">
+              <ResponsiveContainer width="100%" height={300}>
+                <RadarChart data={radarData}>
+                  <PolarGrid />
+                  <PolarAngleAxis dataKey="subject" tick={{ fontSize: 10 }} />
+                  <PolarRadiusAxis angle={90} domain={[0, 100]} tick={{ fontSize: 8 }} />
+                  <Radar
+                    name="Performance"
+                    dataKey="A"
+                    stroke="hsl(var(--chart-3))"
+                    fill="hsl(var(--chart-3))"
+                    fillOpacity={0.3}
+                    strokeWidth={2}
+                  />
+                </RadarChart>
+              </ResponsiveContainer>
+
+              <div className="space-y-4">
+                <div>
+                  <h4 className="font-medium mb-2">Performance Metrics</h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span>Market Share:</span>
+                      <span className="font-medium">{formatPercentage(topDealer.marketShare, 2)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Loyalty Score:</span>
+                      <span className="font-medium">{topDealer.loyaltyScore}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Order Frequency:</span>
+                      <span className="font-medium">{topDealer.orderFrequency.toFixed(1)}/month</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Category Diversity:</span>
+                      <span className="font-medium">{topDealer.categoryDiversity} categories</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Avg Order Value:</span>
+                      <span className="font-medium break-word">
+                        {formatCurrency(topDealer.avgOrderValue)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Growth Rate:</span>
+                      <span className={`font-medium ${topDealer.growthRate >= 0 ? "text-green-600" : "text-red-600"}`}>
+                        {formatPercentage(topDealer.growthRate)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Monthly Trend for Top Dealer */}
+      {topDealer && topDealer.monthlyTrend.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Monthly Sales Trend - {topDealer.dealerName}</CardTitle>
+            <CardDescription>Monthly sales performance over time</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={400}>
+              <LineChart data={topDealer.monthlyTrend}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="month" tick={{ fontSize: 12 }} interval="preserveStartEnd" />
+                <YAxis 
+                  tick={{ fontSize: 12 }} 
+                  tickFormatter={(value) => `₹${(value / 100000).toFixed(0)}L`} 
+                />
+                <Tooltip
+                  formatter={(value: number) => [formatCurrency(value), "Sales"]}
+                  labelStyle={{ fontSize: "12px" }}
+                />
+                <Line 
+                  type="monotone" 
+                  dataKey="sales" 
+                  stroke="hsl(var(--chart-2))" 
+                  strokeWidth={2} 
+                  dot={{ r: 4 }} 
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
     </div>
-  );
+  )
 }

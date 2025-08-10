@@ -5,6 +5,7 @@ import { loadAndProcessData, type ProcessedData } from "@/lib/data-processing"
 import { useToast } from "@/hooks/use-toast"
 import { processInChunks } from "@/lib/data-utils"
 import { createDataWorker } from "@/lib/worker-utils"
+import { cachedFetch, CACHE_KEYS, CACHE_TTL, invalidateCache, cacheMonitor } from "@/lib/cache-utils"
 
 interface DataContextType {
   data: ProcessedData[]
@@ -129,7 +130,17 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
     try {
       setLoading(true)
       setError(null)
-      const processedData = await loadAndProcessData(forceRefresh)
+      
+      // Use cached fetch for data loading
+      const processedData = await cachedFetch(
+        CACHE_KEYS.DELIVERY_DATA,
+        () => loadAndProcessData(forceRefresh),
+        {
+          ttl: CACHE_TTL.LONG,
+          forceRefresh,
+          useLocalStorage: true
+        }
+      )
       
       if (isMountedRef.current) {
         setData(processedData)
@@ -178,6 +189,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
         // Process the new data in background
         processDataChunks(newData)
         
+        // Invalidate related caches
+        invalidateCache(CACHE_KEYS.DELIVERY_DATA)
+        invalidateCache(CACHE_KEYS.STATS)
+        invalidateCache(CACHE_KEYS.DEALER_ANALYTICS)
+        invalidateCache(CACHE_KEYS.PRODUCT_TRENDS)
+        
         toast({
           title: "Data replaced successfully",
           description: `Imported ${newData.length.toLocaleString()} new records`,
@@ -187,6 +204,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
           const combined = [...prevData, ...newData]
           // Process the combined data in background
           processDataChunks(combined)
+          
+          // Invalidate related caches
+          invalidateCache(CACHE_KEYS.DELIVERY_DATA)
+          invalidateCache(CACHE_KEYS.STATS)
+          invalidateCache(CACHE_KEYS.DEALER_ANALYTICS)
+          invalidateCache(CACHE_KEYS.PRODUCT_TRENDS)
           
           toast({
             title: "Data appended successfully",

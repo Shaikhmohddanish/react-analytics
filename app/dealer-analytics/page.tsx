@@ -58,12 +58,13 @@ import { LazyChart } from "@/components/ui/lazy-chart"
 import { LazyChartWrapper } from "@/components/ui/lazy-chart-wrapper"
 import { Progress } from "@/components/ui/progress"
 import { paginateData } from "@/lib/data-utils"
+import { getTier, calculateDealerAnalytics } from "@/lib/analytics-utils"
 
 export default function DealerAnalyticsPage() {
   // Get responsive screen size
   const { isMobile, isTablet, isDesktop } = useResponsive();
   const { data, loading, refreshData } = useData()
-  const { filteredData, isFiltering, filterProgress } = useFilters()
+  const { filteredData, isFiltering, filterProgress, hasActiveFilters } = useFilters()
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedTier, setSelectedTier] = useState<string>("all")
   const [dateRange, setDateRange] = useState<string>("all")
@@ -111,140 +112,24 @@ export default function DealerAnalyticsPage() {
   const dealerAnalytics = useMemo(() => {
     if (!filteredData.length) return null
 
-    // Filter by date range
-    let dateFilteredData = filteredData
+    // Use centralized analytics calculation
+    const dealerMetrics = calculateDealerAnalytics(filteredData)
+
+    // Apply date range filter if needed
+    let filteredDealers = dealerMetrics
     if (dateRange !== "all") {
       const now = new Date()
       const monthsBack = Number.parseInt(dateRange)
       const cutoffDate = new Date(now.getFullYear(), now.getMonth() - monthsBack, 1)
-      dateFilteredData = filteredData.filter((item) => item.challanDate >= cutoffDate)
+      filteredDealers = dealerMetrics.filter((dealer) => dealer.lastOrder >= cutoffDate)
     }
 
-    // Comprehensive dealer analysis - using the native JavaScript reduce for best performance
-    const dealerData = dateFilteredData.reduce(
-      (acc, item) => {
-        const dealer = item["Customer Name"]
-        if (!acc[dealer]) {
-          acc[dealer] = {
-            name: dealer,
-            totalSales: 0,
-            totalOrders: 0,
-            categories: new Set(),
-            months: new Set(),
-            firstOrder: item.challanDate,
-            lastOrder: item.challanDate,
-            categoryBreakdown: {},
-            monthlyData: {},
-            recentActivity: [],
-          }
-        }
-
-        const dealerInfo = acc[dealer]
-        dealerInfo.totalSales += item.itemTotal
-        dealerInfo.totalOrders += 1
-        dealerInfo.categories.add(item.category)
-        dealerInfo.months.add(`${item.year}-${item.monthNum}`)
-
-        if (item.challanDate < dealerInfo.firstOrder) dealerInfo.firstOrder = item.challanDate
-        if (item.challanDate > dealerInfo.lastOrder) dealerInfo.lastOrder = item.challanDate
-
-        // Category breakdown
-        if (!dealerInfo.categoryBreakdown[item.category]) {
-          dealerInfo.categoryBreakdown[item.category] = { sales: 0, orders: 0 }
-        }
-        dealerInfo.categoryBreakdown[item.category].sales += item.itemTotal
-        dealerInfo.categoryBreakdown[item.category].orders += 1
-
-        // Monthly data
-        const monthKey = `${item.year}-${item.monthNum.toString().padStart(2, "0")}`
-        if (!dealerInfo.monthlyData[monthKey]) {
-          dealerInfo.monthlyData[monthKey] = { month: item.month, sales: 0, orders: 0 }
-        }
-        dealerInfo.monthlyData[monthKey].sales += item.itemTotal
-        dealerInfo.monthlyData[monthKey].orders += 1
-
-        // Recent activity (last 30 days)
-        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-        if (item.challanDate >= thirtyDaysAgo) {
-          dealerInfo.recentActivity.push({
-            date: item.challanDate,
-            amount: item.itemTotal,
-            category: item.category,
-          })
-        }
-
-        return acc
-      },
-      {} as Record<string, any>,
-    )
-
-    // Calculate advanced metrics
-    const totalSales = dateFilteredData.reduce((sum, item) => sum + item.itemTotal, 0)
-
-    const dealerMetrics = Object.values(dealerData).map((dealer: any) => {
-      const avgOrderValue = dealer.totalSales / dealer.totalOrders
-      const marketShare = (dealer.totalSales / totalSales) * 100
-      const categoryDiversity = dealer.categories.size
-      const orderFrequency = dealer.totalOrders / Math.max(dealer.months.size, 1)
-
-      // Calculate growth rate
-      const monthlyEntries = Object.entries(dealer.monthlyData).sort(([a], [b]) => a.localeCompare(b))
-      const recentMonths = monthlyEntries.slice(-3)
-      const previousMonths = monthlyEntries.slice(-6, -3)
-
-      const recentSales = recentMonths.reduce((sum, [, data]: [string, any]) => sum + data.sales, 0)
-      const previousSales = previousMonths.reduce((sum, [, data]: [string, any]) => sum + data.sales, 0)
-      const growthRate = previousSales > 0 ? ((recentSales - previousSales) / previousSales) * 100 : 0
-
-      // Loyalty score calculation
-      const daysSinceFirst = Math.floor((dealer.lastOrder - dealer.firstOrder) / (1000 * 60 * 60 * 24))
-      const loyaltyScore = Math.min(
-        100,
-        dealer.totalOrders * 5 +
-          categoryDiversity * 8 +
-          orderFrequency * 10 +
-          Math.min(daysSinceFirst / 10, 25) +
-          dealer.recentActivity.length * 2,
-      )
-
-      // Performance tier
-      let tier = "Bronze"
-      if (marketShare > 5 && loyaltyScore > 70) tier = "Platinum"
-      else if (marketShare > 2 && loyaltyScore > 50) tier = "Gold"
-      else if (marketShare > 1 || loyaltyScore > 30) tier = "Silver"
-
-      // Performance percentile
-      const performanceScore = marketShare * 0.4 + loyaltyScore * 0.3 + Math.max(0, growthRate + 50) * 0.3
-
-      return {
-        ...dealer,
-        categories: categoryDiversity,
-        months: dealer.months.size,
-        avgOrderValue,
-        marketShare,
-        orderFrequency,
-        growthRate,
-        loyaltyScore: Math.round(loyaltyScore),
-        tier,
-        performanceScore,
-        recentActivityCount: dealer.recentActivity.length,
-        monthlyTrend: monthlyEntries.map(([key, data]: [string, any]) => ({
-          month: data.month,
-          sales: data.sales,
-          orders: data.orders,
-        })),
-      }
-    })
-
-    // Apply filters
-    let filteredDealers = dealerMetrics
-
-    // Search filter
+    // Apply search filter
     if (searchTerm) {
-      filteredDealers = filteredDealers.filter((dealer) => dealer.name.toLowerCase().includes(searchTerm.toLowerCase()))
+      filteredDealers = filteredDealers.filter((dealer) => dealer.dealerName.toLowerCase().includes(searchTerm.toLowerCase()))
     }
 
-    // Tier filter
+    // Apply tier filter
     if (selectedTier !== "all") {
       filteredDealers = filteredDealers.filter((dealer) => dealer.tier === selectedTier)
     }
@@ -266,9 +151,12 @@ export default function DealerAnalyticsPage() {
     })
 
     // Calculate percentiles for performance ranking
-    const sortedByPerformance = [...dealerMetrics].sort((a, b) => b.performanceScore - a.performanceScore)
+    const sortedByPerformance = [...dealerMetrics].sort((a, b) => 
+      (b.marketShare * 0.4 + b.loyaltyScore * 0.3 + Math.max(0, b.growthRate + 50) * 0.3) - 
+      (a.marketShare * 0.4 + a.loyaltyScore * 0.3 + Math.max(0, a.growthRate + 50) * 0.3)
+    )
     filteredDealers.forEach((dealer) => {
-      const rank = sortedByPerformance.findIndex((d) => d.name === dealer.name) + 1
+      const rank = sortedByPerformance.findIndex((d) => d.dealerName === dealer.dealerName) + 1
       dealer.percentile = Math.round(((sortedByPerformance.length - rank + 1) / sortedByPerformance.length) * 100)
     })
 
@@ -630,6 +518,20 @@ export default function DealerAnalyticsPage() {
         </Card>
       </div>
 
+      {/* Filter Status Indicator */}
+      {hasActiveFilters && (
+        <Card className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950">
+          <CardContent className="pt-4">
+            <div className="flex items-center space-x-2 text-blue-700 dark:text-blue-300">
+              <Activity className="h-4 w-4" />
+              <span className="text-sm font-medium">
+                Showing analytics for {filteredData.length} filtered records
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+      
       {/* Main Content Area */}
       {isFiltering && (
         <div className="my-4">
@@ -655,7 +557,7 @@ export default function DealerAnalyticsPage() {
                   data={dealerAnalytics.dealerMetrics}
                   columns={[
                     { key: "rank", header: "#" },
-                    { key: "name", header: "Dealer" },
+                    { key: "dealerName", header: "Dealer" },
                     { key: "tier", header: "Tier" },
                     { key: "totalSales", header: "Sales" },
                     { key: "totalOrders", header: "Orders" },
@@ -665,7 +567,7 @@ export default function DealerAnalyticsPage() {
                   rowHeight={60}
                   containerHeight={tableHeight}
                   containerClassName="dealer-table"
-                  getRowId={(dealer) => dealer.name}
+                  getRowId={(dealer) => dealer.dealerName}
                   emptyMessage="No dealers match your filters"
                 />
               </CardContent>
@@ -673,7 +575,7 @@ export default function DealerAnalyticsPage() {
           ) : (
             // For smaller datasets, use the original card-based display
             paginatedData.data.map((dealer: any, index: number) => (
-              <Card key={dealer.name}>
+              <Card key={dealer.dealerName}>
                 <CardContent className="card-content-spacing">
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center space-x-3 min-w-0 flex-1">
@@ -682,8 +584,8 @@ export default function DealerAnalyticsPage() {
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center space-x-2 mb-1">
-                          <h3 className="text-lg font-semibold truncate" title={dealer.name}>
-                            {dealer.name}
+                          <h3 className="text-lg font-semibold truncate" title={dealer.dealerName}>
+                            {dealer.dealerName}
                           </h3>
                           <Badge className={getTierColor(dealer.tier)}>{dealer.tier}</Badge>
                           <Badge variant="outline" className="text-xs">
@@ -693,7 +595,7 @@ export default function DealerAnalyticsPage() {
                         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                           <span>{dealer.totalOrders} orders</span>
                           <span>�</span>
-                          <span>{dealer.categories} categories</span>
+                          <span>{dealer.categoryDiversity} categories</span>
                           <span>�</span>
                           <span>{dealer.recentActivityCount} recent activities</span>
                         </div>
@@ -989,13 +891,13 @@ export default function DealerAnalyticsPage() {
                       <h4 className="text-xs sm:text-sm font-medium">Top Performers in {tier}</h4>
                       <div className="space-y-1">
                         {tierDealers.slice(0, 3).map((dealer, index) => (
-                          <div key={dealer.name} className="flex items-center justify-between p-1.5 sm:p-2 rounded bg-muted/30">
+                          <div key={dealer.dealerName} className="flex items-center justify-between p-1.5 sm:p-2 rounded bg-muted/30">
                             <div className="flex items-center space-x-2 min-w-0 flex-1">
                               <span className="flex-shrink-0 w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">
                                 {index + 1}
                               </span>
-                              <span className="text-xs sm:text-sm font-medium truncate" title={dealer.name}>
-                                {dealer.name}
+                              <span className="text-xs sm:text-sm font-medium truncate" title={dealer.dealerName}>
+                                {dealer.dealerName}
                               </span>
                             </div>
                             <span className="text-xs sm:text-sm font-bold break-word">{formatCurrency(dealer.totalSales)}</span>

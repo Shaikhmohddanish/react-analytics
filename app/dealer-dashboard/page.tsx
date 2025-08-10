@@ -8,6 +8,16 @@ import { Progress } from "@/components/ui/progress"
 import { useData } from "@/contexts/data-context"
 import { useFilters } from "@/contexts/filter-context"
 import {
+  calculateDealerAnalytics,
+  calculateOverallStats,
+  formatCurrency,
+  formatNumber,
+  formatPercentage,
+  getTier,
+  getLoyaltyLevel,
+  LOYALTY_THRESHOLDS,
+} from "@/lib/analytics-utils"
+import {
   Users,
   TrendingUp,
   TrendingDown,
@@ -38,111 +48,16 @@ import {
 } from "recharts"
 
 export default function DealerDashboardPage() {
-  const { data, loading } = useData()
-  const { filteredData } = useFilters()
+  const { loading } = useData()
+  const { filteredData, hasActiveFilters } = useFilters()
   const [viewMode, setViewMode] = React.useState<"category" | "time" | "performance">("category")
 
-  // Advanced dealer analytics with memoization
+  // Use centralized analytics calculation with filtered data
   const dealerAnalytics = React.useMemo(() => {
     if (!filteredData.length) return null
 
-    // Comprehensive dealer analysis
-    const dealerData = filteredData.reduce(
-      (acc, item) => {
-        const dealer = item["Customer Name"]
-        if (!acc[dealer]) {
-          acc[dealer] = {
-            name: dealer,
-            totalSales: 0,
-            totalOrders: 0,
-            categories: new Set(),
-            months: new Set(),
-            firstOrder: item.challanDate,
-            lastOrder: item.challanDate,
-            categoryBreakdown: {},
-            monthlyData: {},
-          }
-        }
-
-        const dealerInfo = acc[dealer]
-        dealerInfo.totalSales += item.itemTotal
-        dealerInfo.totalOrders += 1
-        dealerInfo.categories.add(item.category)
-        dealerInfo.months.add(`${item.year}-${item.monthNum}`)
-
-        if (item.challanDate < dealerInfo.firstOrder) dealerInfo.firstOrder = item.challanDate
-        if (item.challanDate > dealerInfo.lastOrder) dealerInfo.lastOrder = item.challanDate
-
-        // Category breakdown
-        if (!dealerInfo.categoryBreakdown[item.category]) {
-          dealerInfo.categoryBreakdown[item.category] = { sales: 0, orders: 0 }
-        }
-        dealerInfo.categoryBreakdown[item.category].sales += item.itemTotal
-        dealerInfo.categoryBreakdown[item.category].orders += 1
-
-        // Monthly data
-        const monthKey = `${item.year}-${item.monthNum.toString().padStart(2, "0")}`
-        if (!dealerInfo.monthlyData[monthKey]) {
-          dealerInfo.monthlyData[monthKey] = { month: item.month, sales: 0, orders: 0 }
-        }
-        dealerInfo.monthlyData[monthKey].sales += item.itemTotal
-        dealerInfo.monthlyData[monthKey].orders += 1
-
-        return acc
-      },
-      {} as Record<string, any>,
-    )
-
-    // Calculate advanced metrics for each dealer
-    const totalSales = filteredData.reduce((sum, item) => sum + item.itemTotal, 0)
-
-    const dealerMetrics = Object.values(dealerData)
-      .map((dealer: any) => {
-        const avgOrderValue = dealer.totalSales / dealer.totalOrders
-        const marketShare = (dealer.totalSales / totalSales) * 100
-        const categoryDiversity = dealer.categories.size
-        const orderFrequency = dealer.totalOrders / dealer.months.size
-
-        // Calculate growth rate (last 3 months vs previous 3 months)
-        const monthlyEntries = Object.entries(dealer.monthlyData).sort(([a], [b]) => a.localeCompare(b))
-        const recentMonths = monthlyEntries.slice(-3)
-        const previousMonths = monthlyEntries.slice(-6, -3)
-
-        const recentSales = recentMonths.reduce((sum, [, data]: [string, any]) => sum + data.sales, 0)
-        const previousSales = previousMonths.reduce((sum, [, data]: [string, any]) => sum + data.sales, 0)
-        const growthRate = previousSales > 0 ? ((recentSales - previousSales) / previousSales) * 100 : 0
-
-        // Loyalty score calculation
-        const daysSinceFirst = Math.floor((dealer.lastOrder - dealer.firstOrder) / (1000 * 60 * 60 * 24))
-        const loyaltyScore = Math.min(
-          100,
-          dealer.totalOrders * 5 + categoryDiversity * 8 + orderFrequency * 10 + Math.min(daysSinceFirst / 10, 25),
-        )
-
-        // Performance tier
-        let tier = "Bronze"
-        if (marketShare > 5 && loyaltyScore > 70) tier = "Platinum"
-        else if (marketShare > 2 && loyaltyScore > 50) tier = "Gold"
-        else if (marketShare > 1 || loyaltyScore > 30) tier = "Silver"
-
-        return {
-          ...dealer,
-          categories: categoryDiversity,
-          months: dealer.months.size,
-          avgOrderValue,
-          marketShare,
-          orderFrequency,
-          growthRate,
-          loyaltyScore: Math.round(loyaltyScore),
-          tier,
-          monthlyTrend: monthlyEntries.map(([key, data]: [string, any]) => ({
-            month: data.month,
-            sales: data.sales,
-            orders: data.orders,
-          })),
-        }
-      })
-      .sort((a, b) => b.totalSales - a.totalSales)
+    const dealerMetrics = calculateDealerAnalytics(filteredData)
+    const overallStats = calculateOverallStats(filteredData)
 
     // Top performers by different metrics
     const topByGrowth = [...dealerMetrics].sort((a, b) => b.growthRate - a.growthRate).slice(0, 10)
@@ -165,6 +80,7 @@ export default function DealerDashboardPage() {
       topByFrequency,
       tierDistribution,
       totalDealers: dealerMetrics.length,
+      overallStats,
     }
   }, [filteredData])
 
@@ -182,19 +98,6 @@ export default function DealerDashboardPage() {
         No dealer data available
       </div>
     )
-  }
-
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat("en-IN", {
-      style: "currency",
-      currency: "INR",
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0,
-    }).format(value)
-  }
-
-  const formatNumber = (value: number) => {
-    return new Intl.NumberFormat("en-IN").format(value)
   }
 
   const getTierIcon = (tier: string) => {
@@ -229,7 +132,7 @@ export default function DealerDashboardPage() {
     ? [
         { subject: "Sales Volume", A: Math.min(100, (topDealer.marketShare / 10) * 100) },
         { subject: "Order Frequency", A: Math.min(100, (topDealer.orderFrequency / 5) * 100) },
-        { subject: "Category Diversity", A: Math.min(100, (topDealer.categories / 6) * 100) },
+        { subject: "Category Diversity", A: Math.min(100, (topDealer.categoryDiversity / 6) * 100) },
         { subject: "Loyalty Score", A: topDealer.loyaltyScore },
         { subject: "Growth Rate", A: Math.min(100, Math.max(0, topDealer.growthRate + 50)) },
         { subject: "Avg Order Value", A: Math.min(100, (topDealer.avgOrderValue / 50000) * 100) },
@@ -238,6 +141,20 @@ export default function DealerDashboardPage() {
 
   return (
     <div className="space-y-4 sm:space-y-6">
+      {/* Filter Status Indicator */}
+      {hasActiveFilters && (
+        <Card className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950">
+          <CardContent className="pt-4">
+            <div className="flex items-center space-x-2 text-blue-700 dark:text-blue-300">
+              <Activity className="h-4 w-4" />
+              <span className="text-sm font-medium">
+                Showing analytics for {filteredData.length} filtered records
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Dealer Overview Cards */}
       <div className="responsive-grid">
         <Card className="min-h-[120px]">
@@ -262,12 +179,14 @@ export default function DealerDashboardPage() {
             <Award className="h-4 w-4 text-muted-foreground flex-shrink-0" />
           </CardHeader>
           <CardContent className="space-y-2">
-            <div className="text-base sm:text-lg font-bold text-wrap" title={topDealer?.name}>
-              {topDealer?.name || "N/A"}
+            <div className="text-base sm:text-lg font-bold text-wrap" title={topDealer?.dealerName}>
+              {topDealer?.dealerName || "N/A"}
             </div>
             <div className="flex items-center space-x-2">
               {getTierIcon(topDealer?.tier || "Bronze")}
-              <span className="text-xs text-muted-foreground">{topDealer?.marketShare.toFixed(1)}% market share</span>
+              <span className="text-xs text-muted-foreground">
+                {topDealer?.marketShare ? formatPercentage(topDealer.marketShare) : "0.0%"} market share
+              </span>
             </div>
           </CardContent>
         </Card>
@@ -279,10 +198,10 @@ export default function DealerDashboardPage() {
           </CardHeader>
           <CardContent className="space-y-2">
             <div className="text-xl sm:text-2xl font-bold">
-              {(
-                dealerAnalytics.dealerMetrics.reduce((sum, d) => sum + d.growthRate, 0) / dealerAnalytics.totalDealers
-              ).toFixed(1)}
-              %
+              {dealerAnalytics.totalDealers > 0 
+                ? formatPercentage(dealerAnalytics.dealerMetrics.reduce((sum, d) => sum + d.growthRate, 0) / dealerAnalytics.totalDealers)
+                : "0.0%"
+              }
             </div>
             <div className="flex items-center space-x-2">
               <Activity className="h-3 w-3 text-green-500 flex-shrink-0" />
@@ -300,15 +219,15 @@ export default function DealerDashboardPage() {
           </CardHeader>
           <CardContent className="space-y-2">
             <div className="text-xl sm:text-2xl font-bold">
-              {Math.round(
-                dealerAnalytics.dealerMetrics.reduce((sum, d) => sum + d.loyaltyScore, 0) /
-                  dealerAnalytics.totalDealers,
-              )}
+              {dealerAnalytics.totalDealers > 0 
+                ? Math.round(dealerAnalytics.dealerMetrics.reduce((sum, d) => sum + d.loyaltyScore, 0) / dealerAnalytics.totalDealers)
+                : 0
+              }
             </div>
             <div className="flex items-center space-x-2">
               <Star className="h-3 w-3 text-yellow-500 flex-shrink-0" />
               <span className="text-xs text-muted-foreground">
-                {dealerAnalytics.topByLoyalty.filter((d) => d.loyaltyScore > 70).length} high loyalty
+                {dealerAnalytics.topByLoyalty.filter((d) => d.loyaltyScore >= LOYALTY_THRESHOLDS.HIGH).length} high loyalty
               </span>
             </div>
           </CardContent>
@@ -362,7 +281,7 @@ export default function DealerDashboardPage() {
                   <BarChart data={dealerAnalytics.dealerMetrics.slice(0, 10).map((dealer, index) => ({
                     ...dealer,
                     displayName: `Dealer ${index + 1}`,
-                    fullName: dealer.name
+                    fullName: dealer.dealerName
                   }))} margin={{ bottom: 60 }}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis 
@@ -403,7 +322,7 @@ export default function DealerDashboardPage() {
                     <div className="flex items-center space-x-2">
                       <span className="text-sm">{count}</span>
                       <Badge className={getTierColor(tier)}>
-                        {((count / dealerAnalytics.totalDealers) * 100).toFixed(0)}%
+                        {formatPercentage((count / dealerAnalytics.totalDealers) * 100, 0)}
                       </Badge>
                     </div>
                   </div>
@@ -432,14 +351,14 @@ export default function DealerDashboardPage() {
               <div className="space-y-3">
                 <h4 className="font-medium">Growth Leaders</h4>
                 {dealerAnalytics.topByGrowth.slice(0, 8).map((dealer, index) => (
-                  <div key={dealer.name} className="flex items-center justify-between p-2 rounded-lg bg-muted/50">
+                  <div key={dealer.dealerName} className="flex items-center justify-between p-2 rounded-lg bg-muted/50">
                     <div className="flex items-center space-x-3 min-w-0 flex-1">
                       <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs font-bold">
                         {index + 1}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium truncate" title={dealer.name}>
-                          {dealer.name}
+                        <p className="text-sm font-medium truncate" title={dealer.dealerName}>
+                          {dealer.dealerName}
                         </p>
                         <div className="flex items-center space-x-2 mt-1">
                           {getTierIcon(dealer.tier)}
@@ -457,7 +376,7 @@ export default function DealerDashboardPage() {
                         <span
                           className={`text-sm font-bold ${dealer.growthRate >= 0 ? "text-green-600" : "text-red-600"}`}
                         >
-                          {dealer.growthRate.toFixed(1)}%
+                          {formatPercentage(dealer.growthRate)}
                         </span>
                       </div>
                     </div>
@@ -492,7 +411,7 @@ export default function DealerDashboardPage() {
                 <div className="space-y-2">
                   <div className="flex justify-between items-center">
                     <span className="text-sm">Market Share</span>
-                    <span className="text-sm font-bold">{topDealer?.marketShare.toFixed(2)}%</span>
+                    <span className="text-sm font-bold">{formatPercentage(topDealer?.marketShare || 0, 2)}</span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-sm">Loyalty Score</span>
@@ -507,7 +426,7 @@ export default function DealerDashboardPage() {
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-sm">Category Diversity</span>
-                    <span className="text-sm font-bold">{topDealer?.categories} categories</span>
+                    <span className="text-sm font-bold">{topDealer?.categoryDiversity} categories</span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-sm">Avg Order Value</span>
@@ -531,24 +450,24 @@ export default function DealerDashboardPage() {
         <CardContent>
           <div className="space-y-4">
             {dealerAnalytics.dealerMetrics.slice(0, 15).map((dealer, index) => (
-              <div key={dealer.name} className="flex items-center justify-between p-3 rounded-lg border bg-card">
+              <div key={dealer.dealerName} className="flex items-center justify-between p-3 rounded-lg border bg-card">
                 <div className="flex items-center space-x-4 min-w-0 flex-1">
                   <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-bold">
                     {index + 1}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center space-x-2 mb-1">
-                      <h4 className="text-sm font-medium truncate" title={dealer.name}>
-                        {dealer.name}
+                      <h4 className="text-sm font-medium truncate" title={dealer.dealerName}>
+                        {dealer.dealerName}
                       </h4>
                       <Badge className={getTierColor(dealer.tier)}>{dealer.tier}</Badge>
                     </div>
                     <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                       <span>{dealer.totalOrders} orders</span>
                       <span>•</span>
-                      <span>{dealer.categories} categories</span>
+                      <span>{dealer.categoryDiversity} categories</span>
                       <span>•</span>
-                      <span>{dealer.loyaltyScore}% loyalty</span>
+                      <span>{formatPercentage(dealer.loyaltyScore)} loyalty</span>
                     </div>
                   </div>
                 </div>
@@ -561,7 +480,7 @@ export default function DealerDashboardPage() {
                       <TrendingDown className="h-3 w-3 text-red-500 flex-shrink-0" />
                     )}
                     <span className={`text-xs ${dealer.growthRate >= 0 ? "text-green-600" : "text-red-600"}`}>
-                      {dealer.growthRate.toFixed(1)}%
+                      {formatPercentage(dealer.growthRate)}
                     </span>
                   </div>
                 </div>
