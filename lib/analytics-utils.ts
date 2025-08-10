@@ -5,6 +5,34 @@
  * to ensure consistency in analytics, metrics, and scoring.
  */
 
+// Month order for chronological sorting
+const MONTH_ORDER = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+]
+
+/**
+ * Sort months chronologically instead of alphabetically
+ * @param months Array of month strings (e.g., ['Jan', 'Mar', 'Feb'])
+ * @returns Sorted array in chronological order
+ */
+export function sortMonthsChronologically(months: string[]): string[] {
+  return months.sort((a, b) => {
+    return MONTH_ORDER.indexOf(a) - MONTH_ORDER.indexOf(b)
+  })
+}
+
+/**
+ * Sort data by month chronologically
+ * @param data Array of objects with a 'month' property
+ * @returns Sorted array in chronological order
+ */
+export function sortDataByMonth<T extends { month: string }>(data: T[]): T[] {
+  return data.sort((a, b) => {
+    return MONTH_ORDER.indexOf(a.month) - MONTH_ORDER.indexOf(b.month)
+  })
+}
+
 import { ProcessedData } from "@/models"
 
 /**

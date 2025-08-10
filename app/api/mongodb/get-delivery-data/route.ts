@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDeliveryDataServer } from '@/lib/mongodb-server';
 
+// Force dynamic rendering for this route
+export const dynamic = 'force-dynamic';
+
 // Cache configuration
 export const revalidate = 300; // Revalidate every 5 minutes
 export const runtime = 'nodejs';

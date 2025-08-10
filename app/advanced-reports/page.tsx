@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { loadAndProcessData, type ProcessedData, formatCurrency } from "@/lib/data-processing"
+import { sortDataByMonth, sortMonthsChronologically } from "@/lib/analytics-utils"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { BarChart3, DollarSign, PieChart, CalendarRange, Package2, ChevronLeft, ChevronRight } from "lucide-react"
 import {
@@ -235,12 +236,13 @@ export default function AdvancedReports() {
     {} as Record<string, number>,
   )
 
-  const monthlyShareData = Object.values(monthlyCategory)
-    .map((item) => ({
-      ...item,
-      percent: ((item.total / monthlyTotals[item.month]) * 100).toFixed(2),
-    }))
-    .sort((a, b) => a.month.localeCompare(b.month))
+  const monthlyShareData = sortDataByMonth(
+    Object.values(monthlyCategory)
+      .map((item) => ({
+        ...item,
+        percent: ((item.total / monthlyTotals[item.month]) * 100).toFixed(2),
+      }))
+  )
 
   // Section 5: Product monthly share
   const productMonthly = data.reduce(
@@ -271,14 +273,7 @@ export default function AdvancedReports() {
     percent: ((item.total / productTotals[item.product]) * 100).toFixed(2),
   }))
 
-  // Sort months chronologically instead of alphabetically
-  const monthOrder = [
-    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-  ]
-  const months = [...new Set(data.map((d) => d.month))].sort((a, b) => {
-    return monthOrder.indexOf(a) - monthOrder.indexOf(b)
-  })
+  const months = sortMonthsChronologically([...new Set(data.map((d) => d.month))])
   const topProducts = Object.entries(productTotals)
     .sort(([, a], [, b]) => b - a)
     .slice(0, 15)
