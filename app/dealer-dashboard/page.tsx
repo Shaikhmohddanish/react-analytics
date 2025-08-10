@@ -359,12 +359,32 @@ export default function DealerDashboardPage() {
             <div className="responsive-grid-2">
               <div className="chart-container">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={dealerAnalytics.dealerMetrics.slice(0, 10)}>
+                  <BarChart data={dealerAnalytics.dealerMetrics.slice(0, 10).map((dealer, index) => ({
+                    ...dealer,
+                    displayName: `Dealer ${index + 1}`,
+                    fullName: dealer.name
+                  }))} margin={{ bottom: 60 }}>
                     <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" tick={{ fontSize: 10 }} angle={-45} textAnchor="end" height={80} />
+                    <XAxis 
+                      dataKey="displayName" 
+                      tick={{ fontSize: 12 }} 
+                      angle={0} 
+                      textAnchor="middle" 
+                      height={50}
+                      interval={0}
+                    />
                     <YAxis tick={{ fontSize: 12 }} tickFormatter={(value) => `₹${(value / 100000).toFixed(0)}L`} />
                     <Tooltip
-                      formatter={(value: number) => [formatCurrency(value), "Sales"]}
+                      formatter={(value: number, name: string, props: any) => [
+                        formatCurrency(value), 
+                        "Sales"
+                      ]}
+                      labelFormatter={(label, payload) => {
+                        if (payload && payload[0] && payload[0].payload.fullName) {
+                          return payload[0].payload.fullName;
+                        }
+                        return label;
+                      }}
                       labelStyle={{ fontSize: "12px" }}
                     />
                     <Bar dataKey="totalSales" fill="hsl(var(--chart-1))" />

@@ -622,3 +622,44 @@ export async function markFileDeletedServer(fileId: string) {
     };
   }
 }
+
+/**
+ * Delete all delivery data from the database
+ */
+export async function deleteAllDeliveryDataServer() {
+  try {
+    console.log("Deleting all delivery data from database...");
+    const db = await connectToDatabase();
+    
+    // Check if we're using local storage fallback
+    if (db === localStorage) {
+      console.log("Using local storage for delivery data deletion");
+      // Clear the local storage collection
+      localStorage.collections[dataCollection] = [];
+      return { success: true, deletedCount: 0 };
+    }
+    
+    const collection = db.collection(dataCollection);
+    
+    // Delete all documents in the collection
+    const result = await collection.deleteMany({});
+    console.log(`Successfully deleted ${result.deletedCount} delivery records`);
+    
+    return {
+      success: true,
+      deletedCount: result.deletedCount
+    };
+  } catch (error) {
+    console.error("Error deleting all delivery data:", error);
+    
+    let errorMessage = "Unknown database error";
+    if (error instanceof Error) {
+      errorMessage = error.message;
+    }
+    
+    return {
+      success: false,
+      error: errorMessage
+    };
+  }
+}

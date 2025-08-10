@@ -28,7 +28,7 @@ import { useToast } from "@/hooks/use-toast"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import Papa from "papaparse"
 import { uploadCSVToCloudinary, getCloudinaryCSVFiles, downloadCSVFromCloudinary } from "@/lib/cloudinary"
-import { storeCSVFileInfo, storeDeliveryData, getCSVFileEntries } from "@/lib/mongodb-client"
+import { storeCSVFileInfo, storeDeliveryData, getCSVFileEntries, deleteAllDeliveryData } from "@/lib/mongodb-client"
 import { storeFileUploadHistory } from "@/lib/file-history-client"
 import { validateCSV, fixCSVFormat } from "@/lib/csv-utils"
 
@@ -71,6 +71,12 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0]
     if (selectedFile) {
+      console.log("File selected:", {
+        name: selectedFile.name,
+        size: selectedFile.size,
+        type: selectedFile.type
+      });
+      
       if (selectedFile.type !== "text/csv" && !selectedFile.name.endsWith(".csv")) {
         toast({
           title: "Invalid file type",
@@ -98,8 +104,14 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
           console.log("Using partial data for preview despite validation issues");
           setPreviewData(validation.data.slice(0, 5));
           if (validation.meta?.fields) {
-            validateColumns(validation.meta.fields);
-            logAvailableColumns(validation.meta.fields);
+            const isValid = validateColumns(validation.meta.fields);
+            if (!isValid) {
+              toast({
+                title: "Column Validation Warning",
+                description: "Some required columns may be missing, but import will attempt to proceed",
+                variant: "default",
+              });
+            }
           }
         } else {
           // Show error toast if no usable data
@@ -114,8 +126,14 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
         // File is valid, set the preview data
         setPreviewData(validation.data?.slice(0, 5) || []);
         if (validation.meta?.fields) {
-          validateColumns(validation.meta.fields);
-          logAvailableColumns(validation.meta.fields);
+          const isValid = validateColumns(validation.meta.fields);
+          if (!isValid) {
+            toast({
+              title: "Column Validation Warning",
+              description: "Some required columns may be missing, but import will attempt to proceed",
+              variant: "default",
+            });
+          }
         }
         
         console.log("CSV Preview Results:", validation);
@@ -133,89 +151,90 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
   }
 
   const validateColumns = (columns: string[]) => {
+    console.log("Available columns:", columns);
+    
+    // Check for exact matches first
     const requiredColumns = [
       "Delivery Challan ID",
-      "Challan Date",
-      "Delivery Challan Number", 
+      "Challan Date", 
+      "Delivery Challan Number",
       "Customer Name",
       "Item Name",
-      "Item Total",
+      "Item Total"
     ];
     
-    // Make column validation more flexible - look for partial matches
-    // This allows for more variations in column names
-    const missingColumns = requiredColumns.filter((col) => {
-      // Break the column name into parts and check if any part exists
+    const exactMatches = requiredColumns.filter(col => 
+      columns.includes(col)
+    );
+    
+    console.log("Exact matches found:", exactMatches);
+    
+    // If we have most of the required columns, we're good
+    if (exactMatches.length >= 4) {
+      setValidationErrors([]);
+      return true;
+    }
+    
+    // If we don't have exact matches, try partial matching
+    const partialMatches = requiredColumns.filter((col) => {
       const parts = col.toLowerCase().split(/\s+/);
-      return !columns.some((column) => {
+      return columns.some((column) => {
         const colLower = column.toLowerCase();
         return parts.some(part => colLower.includes(part));
       });
     });
     
-    // If we're getting too many validation errors, check if we have numeric column headers
-    if (missingColumns.length > 3 && columns.some(c => !isNaN(Number(c)))) {
-      console.log("Detected numeric column headers, possibly a headerless CSV");
-      // For headerless CSVs, we'll be more lenient
+    console.log("Partial matches found:", partialMatches);
+    
+    if (partialMatches.length >= 4) {
       setValidationErrors([{
-        message: "Using generic column headers. Data import will attempt to map fields automatically.",
+        message: "Some column names don't match exactly, but close matches were found. Import will proceed.",
         severity: "warning"
       }]);
-    } else if (missingColumns.length > 0) {
-      setValidationErrors(missingColumns.map(col => `Missing column: ${col}`));
-    } else {
-      setValidationErrors([]);  // Clear validation errors if columns are valid
+      return true;
     }
     
-    console.log("Validation result:", missingColumns.length === 0 ? "PASSED" : "FAILED", 
-               "Missing:", missingColumns, 
-               "Available:", columns);
+    // If we still don't have enough matches, show error
+    const missingColumns = requiredColumns.filter(col => 
+      !exactMatches.includes(col) && !partialMatches.includes(col)
+    );
+    
+    setValidationErrors([`Missing required columns: ${missingColumns.join(', ')}`]);
+    return false;
   }
   
-  // Load Cloudinary files when dialog opens
+  // Load previously uploaded files when dialog opens
   useEffect(() => {
     if (open) {
-      fetchCloudinaryFiles();
+      fetchStoredFiles();
     }
   }, [open]);
 
-  const fetchCloudinaryFiles = async () => {
+  const fetchStoredFiles = async () => {
     try {
       setCloudinaryLoading(true);
       
-      // Get files from Cloudinary
-      const cloudinaryResult = await getCloudinaryCSVFiles();
-      
-      // Get file entries from MongoDB to enhance with metadata
+      // Get file entries from MongoDB only - this contains all the metadata we need
       const mongodbFiles = await getCSVFileEntries();
       
-      // Combine results - prioritize MongoDB entries but include all Cloudinary files
-      const combinedFiles = cloudinaryResult.resources.map((cloudFile: any) => {
-        // Check if there's a matching MongoDB entry
-        const matchingMongoFile = mongodbFiles.find(
-          (mongoFile: any) => mongoFile.cloudinaryPublicId === cloudFile.public_id
-        );
-        
-        if (matchingMongoFile) {
-          // Return enhanced file with MongoDB data
-          return {
-            ...cloudFile,
-            description: matchingMongoFile.description,
-            recordCount: matchingMongoFile.recordCount,
-            mongoId: matchingMongoFile._id.toString()
-          };
-        }
-        
-        // Just return the Cloudinary file data
-        return cloudFile;
-      });
+      // Transform MongoDB data to match the expected format for the UI
+      const transformedFiles = mongodbFiles.map((mongoFile: any) => ({
+        public_id: mongoFile.cloudinaryPublicId || mongoFile._id.toString(),
+        filename: mongoFile.fileName,
+        description: mongoFile.description,
+        recordCount: mongoFile.recordCount,
+        created_at: mongoFile.uploadDate,
+        mongoId: mongoFile._id.toString(),
+        cloudinaryUrl: mongoFile.cloudinaryUrl,
+        fileSize: mongoFile.fileSize
+      }));
       
-      setCloudinaryFiles(combinedFiles || []);
+      setCloudinaryFiles(transformedFiles || []);
     } catch (error) {
-      console.error("Error fetching files:", error);
+      console.error("Error fetching files from MongoDB:", error);
       toast({
         title: "Storage Error",
-        description: "Failed to fetch stored CSV files",
+        description: "Failed to fetch stored CSV files from database",
         variant: "destructive",
       });
     } finally {
@@ -442,246 +461,248 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
 
   // Process parse results into the expected format
   const processParseResults = (results: Papa.ParseResult<Record<string, any>>) => {
-    // Log the full data to help debug
     console.log("Processing CSV data, total rows:", results.data.length);
+    console.log("Available columns:", results.meta.fields);
     
-    // Check if data is an array of arrays instead of objects (no headers)
-    const isArrayData = Array.isArray(results.data[0]);
-    
-    let processableData = results.data;
-    
-    // If we got array data instead of objects, convert it
-    if (isArrayData && results.data.length >= 2) {
-      console.log("Detected array data format. Converting to objects...");
-      
-      // First row is headers
-      const headers = results.data[0].map((h: any, i: number) => 
-        (typeof h === 'string' && h.trim()) || `Column${i+1}`
-      );
-      
-      // Convert remaining rows to objects
-      processableData = results.data.slice(1).map((row: any) => {
-        const obj: any = {};
-        headers.forEach((header: string, i: number) => {
-          obj[header] = row[i];
-        });
-        return obj;
-      });
-      
-      console.log("Converted array data to objects:", processableData.slice(0, 2));
-    }
-    
-    // Filter out empty rows
-    const nonEmptyRows = processableData.filter(row => {
-      return row && Object.keys(row).length > 0 && !Object.values(row).every(val => val === "" || val === undefined || val === null);
+    // Filter out completely empty rows
+    const nonEmptyRows = results.data.filter(row => {
+      return row && Object.keys(row).length > 0 && 
+             !Object.values(row).every(val => val === "" || val === undefined || val === null);
     });
     
     console.log("Non-empty rows:", nonEmptyRows.length);
     
-    return nonEmptyRows
+    // Debug the first few rows to see their structure
+    console.log("First 3 rows structure:", nonEmptyRows.slice(0, 3).map(row => ({
+      keys: Object.keys(row),
+      hasDate: !!(row["Challan Date"] || row["challan date"]),
+      hasItem: !!(row["Item Name"] || row["item name"]),
+      hasTotal: !!(row["Item Total"] || row["item total"]),
+      dateValue: row["Challan Date"] || row["challan date"],
+      itemValue: row["Item Name"] || row["item name"],
+      totalValue: row["Item Total"] || row["item total"]
+    })));
+    
+    // Be more lenient with filtering - if we have any data, process it
+    const filteredRows = nonEmptyRows
       .filter((row: any) => {
-        // More flexible check - check if the row has any data
-        if (!row || Object.keys(row).length === 0) {
-          return false;
+        // Check if the row has at least some essential data
+        const hasDate = row["Challan Date"] || row["challan date"];
+        const hasItem = row["Item Name"] || row["item name"];
+        const hasTotal = row["Item Total"] || row["item total"];
+        
+        // If we have at least 2 out of 3 essential fields, consider it valid
+        const validFields = [hasDate, hasItem, hasTotal].filter(Boolean).length;
+        const isValid = validFields >= 2;
+        
+        if (!isValid) {
+          console.log("Filtered out row:", {
+            hasDate,
+            hasItem,
+            hasTotal,
+            validFields,
+            rowKeys: Object.keys(row)
+          });
         }
         
-        // Log available columns for the first few rows to help with debugging
-        if (nonEmptyRows.indexOf(row) < 3) {
-          console.log("Available columns for row:", Object.keys(row));
-        }
-        
-        return true; // Keep all non-empty rows for processing
+        return isValid;
       })
       .map((row: any) => {
         try {
           const today = new Date();
           
-          // Get all keys from the row
-          const rowKeys = Object.keys(row);
+          // Extract values using exact column names first, then fallback to lowercase
+          const challanId = row["Delivery Challan ID"] || row["delivery challan id"] || "";
+          const challanDateStr = row["Challan Date"] || row["challan date"] || "";
+          const challanNumber = row["Delivery Challan Number"] || row["delivery challan number"] || "";
+          const customerName = row["Customer Name"] || row["customer name"] || "";
+          const itemName = row["Item Name"] || row["item name"] || "";
+          const itemTotalStr = row["Item Total"] || row["item total"] || "0";
           
-          // Check if we received numeric column names (like 0, 1, 2) which indicates a CSV without headers
-          const hasNumericKeys = rowKeys.some(k => !isNaN(Number(k)));
-          
-          if (hasNumericKeys) {
-            console.log("Detected numeric keys, possibly a CSV without proper headers:", rowKeys);
-          }
-          
-          // SUPER ROBUST COLUMN DETECTION LOGIC
-          // Date field detection – match any column that might contain date information
-          const dateField = rowKeys.find(k => {
-            const kl = (k || "").toString().toLowerCase();
-            return kl.includes('date') || kl.includes('day') || kl.includes('time') || 
-                   kl === 'dt' || /^d$/.test(kl) || kl === '2' || // Common numeric column for date
-                   (kl.includes('challan') && kl.includes('dt'));
-          });
-
-          // Item field detection – more inclusive search
-          const itemField = rowKeys.find(k => {
-            const kl = (k || "").toString().toLowerCase();
-            return kl.includes('item') || kl.includes('product') || kl.includes('descrip') || 
-                   kl.includes('goods') || kl.includes('material') || kl.includes('name') ||
-                   kl === '4' || kl === '3'; // Common numeric columns for item
-          });
-
-          // Total field detection – broader pattern matching
-          const totalField = rowKeys.find(k => {
-            const kl = (k || "").toString().toLowerCase();
-            return kl.includes('item total') || kl.includes('total') || kl.includes('amount') || 
-                   kl.includes('price') || kl.includes('value') || kl.includes('sum') ||
-                   kl === '5' || kl === '6'; // Common numeric columns for amount
-          });
-
-          // Customer field detection – expanded search
-          const customerField = rowKeys.find(k => {
-            const kl = (k || "").toString().toLowerCase();
-            return kl.includes('customer') || kl.includes('client') || kl.includes('buyer') || 
-                   kl.includes('company') || kl.includes('party') || kl.includes('dealer') || 
-                   kl === '1'; // Common numeric column for customer
-          });
-
-          // Challan field detection – broader match
-          const challanField = rowKeys.find(k => {
-            const kl = (k || "").toString().toLowerCase();
-            return kl.includes('challan') || kl.includes('invoice') || kl.includes('bill') || 
-                   kl.includes('number') || kl.includes('ref') || kl.includes('id') ||
-                   kl === '0'; // Common numeric column for ID
-          });
-
-          // Direct access to exact column names when available
-          const deliveryChallanId = row['Delivery Challan ID']?.toString().trim() || '';
-          const exactChallanDate = row['Challan Date'] ? new Date(row['Challan Date']) : null;
-          const deliveryChallanNum = row['Delivery Challan Number']?.toString().trim() || '';
-          const exactCustomerName = row['Customer Name']?.toString().trim() || '';
-          const exactItemName = row['Item Name']?.toString().trim() || '';
-          const exactItemTotal = row['Item Total'] ? 
-            parseFloat(String(row['Item Total']).replace(/[₹,]/g, '')) || 0 : null;
-          
-          // Log chosen fields for debugging
-          if (nonEmptyRows.indexOf(row) < 3) {
-            console.log("Selected fields:", {
-              dateField,
-              itemField, 
-              totalField,
-              customerField,
-              challanField,
-              hasExactFields: {
-                challanDate: !!exactChallanDate,
-                customerName: !!exactCustomerName,
-                itemName: !!exactItemName,
-                itemTotal: exactItemTotal !== null
-              }
-            });
-          }
-
-          // Extract values with fallbacks, preferring exact matches when available
-          const rawTotal = exactItemTotal !== null ? exactItemTotal : 
-                          (totalField ? row[totalField] : "0");
-          
-          const totalValue = typeof rawTotal === 'number' 
-            ? rawTotal 
-            : parseFloat(String(rawTotal).replace(/[₹,]/g, "")) || 0;
-            
-          // Get date value
+          // Parse date
           let challanDate = today;
-          if (exactChallanDate && !isNaN(exactChallanDate.getTime())) {
-            challanDate = exactChallanDate;
-          } else if (dateField && row[dateField]) {
-            const parsedDate = new Date(row[dateField]);
+          if (challanDateStr) {
+            const parsedDate = new Date(challanDateStr);
             if (!isNaN(parsedDate.getTime())) {
               challanDate = parsedDate;
             }
           }
           
-          // Extract values safely, preferring exact column names
-          const itemName = exactItemName || (itemField ? row[itemField] : "Unnamed Item");
-          const customerName = exactCustomerName || (customerField ? row[customerField] : "Unknown Customer");
-          const challanNumber = deliveryChallanNum || (challanField ? row[challanField] : `DC-${Date.now()}`);
-          const itemNameCleaned = (itemName || "").toString().toLowerCase();
-          
-          // Category mapping (simplified version)
-          const categoryMap: Record<string, string[]> = {
-            "Bio-Fertilizers": [
-              "consortia",
-              "trichoderma",
-              "psb",
-              "azotobacter",
-              "metarhizium",
-              "psudomonas",
-              "rhizo",
-            ],
-            Micronutrients: ["nutrisac", "micromax", "ferrous", "magnesium", "orient", "diamond"],
-            "Chelated Micronutrients": ["iron man", "micro man", "eddha"],
-            "Bio-Stimulants": [
-              "titanic",
-              "jeeto",
-              "flora",
-              "humic",
-              "pickup",
-              "boomer",
-              "bingo",
-              "rainbow",
-              "zumbaa",
-              "turma",
-              "simba",
-              "captain",
-              "ferrari",
-              "fountain",
-            ],
-            "Other Bulk Orders": ["biomass", "nandi", "calcimag"],
+          // Parse total
+          let itemTotal = 0;
+          if (itemTotalStr) {
+            const cleaned = String(itemTotalStr).replace(/[₹$,]/g, '').trim();
+            itemTotal = parseFloat(cleaned) || 0;
           }
-  
-          let category = "Uncategorized"
+          
+          // Extract month and year
+          const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+          const month = monthNames[challanDate.getMonth()];
+          const year = challanDate.getFullYear();
+          const monthNum = challanDate.getMonth() + 1;
+          
+          // Clean item name and detect category
+          const itemNameCleaned = (itemName || "").toString().toLowerCase().trim();
+          
+          // Category mapping
+          const categoryMap: Record<string, string[]> = {
+            "Bio-Fertilizers": ["consortia", "trichoderma", "psb", "azotobacter", "metarhizium", "psudomonas", "rhizo", "peek sanjivani", "bio surakshak", "sanjivani"],
+            Micronutrients: ["nutrisac", "micromax", "ferrous", "magnesium", "orient", "diamond", "dimond"],
+            "Chelated Micronutrients": ["iron man", "micro man", "eddha"],
+            "Bio-Stimulants": ["titanic", "jeeto", "flora", "humic", "pickup", "boomer", "bingo", "rainbow", "zumbaa", "turma", "simba", "captain", "ferrari", "fountain"],
+            "Other Bulk Orders": ["biomass", "nandi", "calcimag"],
+          };
+          
+          let category = "Other";
           for (const [cat, keywords] of Object.entries(categoryMap)) {
             if (keywords.some((keyword) => itemNameCleaned.includes(keyword))) {
-              category = cat
-              break
+              category = cat;
+              break;
             }
           }
           
           return {
             ...row,
-            "Challan Date": row['Challan Date'] || (dateField ? row[dateField] : today.toISOString().split('T')[0]),
-            "Item Name": row['Item Name'] || itemName,
-            "Item Total": row['Item Total'] || rawTotal,
-            "Customer Name": row['Customer Name'] || customerName,
-            "Delivery Challan Number": row['Delivery Challan Number'] || challanNumber,
-            "Delivery Challan ID": row['Delivery Challan ID'] || deliveryChallanId,
+            "Delivery Challan ID": challanId,
+            "Challan Date": challanDateStr,
+            "Delivery Challan Number": challanNumber,
+            "Customer Name": customerName,
+            "Item Name": itemName,
+            "Item Total": itemTotalStr,
             challanDate,
-            itemTotal: totalValue,
+            itemTotal,
             itemNameCleaned,
             category,
-            month: challanDate.toLocaleDateString("en-US", {
-              month: "long",
-              year: "numeric",
-            }),
-            year: challanDate.getFullYear(),
-            monthNum: challanDate.getMonth() + 1,
+            month,
+            year,
+            monthNum,
           };
         } catch (error) {
-          // Instead of returning null, return a fallback object with defaults
           console.warn("Error processing row:", row, error);
           const today = new Date();
           return {
             ...row,
+            "Delivery Challan ID": row["Delivery Challan ID"] || "",
             "Challan Date": today.toISOString().split('T')[0],
-            "Item Name": "Unnamed Item",
-            "Item Total": 0,
-            "Customer Name": "Unknown Customer",
-            "Delivery Challan Number": `DC-${Date.now()}`,
-            "Delivery Challan ID": "",
+            "Delivery Challan Number": row["Delivery Challan Number"] || "",
+            "Customer Name": row["Customer Name"] || "Unknown Customer",
+            "Item Name": row["Item Name"] || "Unnamed Item",
+            "Item Total": "0",
             challanDate: today,
             itemTotal: 0,
             itemNameCleaned: "",
-            category: "Uncategorized",
-            month: today.toLocaleDateString("en-US", {
-              month: "long",
-              year: "numeric",
-            }),
+            category: "Other",
+            month: today.toLocaleDateString("en-US", { month: "long", year: "numeric" }),
             year: today.getFullYear(),
             monthNum: today.getMonth() + 1,
           };
         }
       });
+    
+    console.log("Final processed rows:", filteredRows.length);
+    
+    // If we still have no data, try a more aggressive approach
+    if (filteredRows.length === 0 && nonEmptyRows.length > 0) {
+      console.log("No rows passed strict filtering, trying more lenient approach...");
+      
+      // Process all non-empty rows without strict filtering
+      const lenientRows = nonEmptyRows.map((row: any) => {
+        try {
+          const today = new Date();
+          
+          // Extract values using exact column names first, then fallback to lowercase
+          const challanId = row["Delivery Challan ID"] || row["delivery challan id"] || "";
+          const challanDateStr = row["Challan Date"] || row["challan date"] || "";
+          const challanNumber = row["Delivery Challan Number"] || row["delivery challan number"] || "";
+          const customerName = row["Customer Name"] || row["customer name"] || "";
+          const itemName = row["Item Name"] || row["item name"] || "";
+          const itemTotalStr = row["Item Total"] || row["item total"] || "0";
+          
+          // Parse date
+          let challanDate = today;
+          if (challanDateStr) {
+            const parsedDate = new Date(challanDateStr);
+            if (!isNaN(parsedDate.getTime())) {
+              challanDate = parsedDate;
+            }
+          }
+          
+          // Parse total
+          let itemTotal = 0;
+          if (itemTotalStr) {
+            const cleaned = String(itemTotalStr).replace(/[₹$,]/g, '').trim();
+            itemTotal = parseFloat(cleaned) || 0;
+          }
+          
+          // Extract month and year
+          const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+          const month = monthNames[challanDate.getMonth()];
+          const year = challanDate.getFullYear();
+          const monthNum = challanDate.getMonth() + 1;
+          
+          // Clean item name and detect category
+          const itemNameCleaned = (itemName || "").toString().toLowerCase().trim();
+          
+          // Category mapping
+          const categoryMap: Record<string, string[]> = {
+            "Bio-Fertilizers": ["consortia", "trichoderma", "psb", "azotobacter", "metarhizium", "psudomonas", "rhizo", "peek sanjivani", "bio surakshak", "sanjivani"],
+            Micronutrients: ["nutrisac", "micromax", "ferrous", "magnesium", "orient", "diamond", "dimond"],
+            "Chelated Micronutrients": ["iron man", "micro man", "eddha"],
+            "Bio-Stimulants": ["titanic", "jeeto", "flora", "humic", "pickup", "boomer", "bingo", "rainbow", "zumbaa", "turma", "simba", "captain", "ferrari", "fountain"],
+            "Other Bulk Orders": ["biomass", "nandi", "calcimag"],
+          };
+          
+          let category = "Other";
+          for (const [cat, keywords] of Object.entries(categoryMap)) {
+            if (keywords.some((keyword) => itemNameCleaned.includes(keyword))) {
+              category = cat;
+              break;
+            }
+          }
+          
+          return {
+            ...row,
+            "Delivery Challan ID": challanId,
+            "Challan Date": challanDateStr,
+            "Delivery Challan Number": challanNumber,
+            "Customer Name": customerName,
+            "Item Name": itemName,
+            "Item Total": itemTotalStr,
+            challanDate,
+            itemTotal,
+            itemNameCleaned,
+            category,
+            month,
+            year,
+            monthNum,
+          };
+        } catch (error) {
+          console.warn("Error processing row:", row, error);
+          const today = new Date();
+          return {
+            ...row,
+            "Delivery Challan ID": row["Delivery Challan ID"] || "",
+            "Challan Date": today.toISOString().split('T')[0],
+            "Delivery Challan Number": row["Delivery Challan Number"] || "",
+            "Customer Name": row["Customer Name"] || "Unknown Customer",
+            "Item Name": row["Item Name"] || "Unnamed Item",
+            "Item Total": "0",
+            challanDate: today,
+            itemTotal: 0,
+            itemNameCleaned: "",
+            category: "Other",
+            month: today.toLocaleDateString("en-US", { month: "long", year: "numeric" }),
+            year: today.getFullYear(),
+            monthNum: today.getMonth() + 1,
+          };
+        }
+      });
+      
+      console.log("Lenient processing result:", lenientRows.length, "rows");
+      return lenientRows;
+    }
+    
+    return filteredRows;
   };
 
   const handleImport = async () => {
@@ -691,7 +712,7 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
     setProgress(0);
 
     try {
-      let cloudinaryResult = null;
+      let cloudinaryResult: any = null;
       
       // If cloud storage is enabled, upload to Cloudinary first
       if (useCloud) {
@@ -782,10 +803,9 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
       Papa.parse(csvContent, {
         header: true,
         skipEmptyLines: true,
-        delimiter: "",  // Auto-detect delimiter
-        delimitersToGuess: [',', '\t', ';', '|'], // Try to guess delimiter
+        delimiter: ",",  // Use comma explicitly since we know it's comma-delimited
         comments: false,
-        dynamicTyping: true, // Automatically convert types
+        dynamicTyping: false, // Don't auto-convert types to avoid issues
         transformHeader: (header: string) => header.trim(),
         step: (results: Papa.ParseStepResult<any>, parser: any) => {
           // Update progress during parsing
@@ -802,20 +822,78 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
             if (results.errors.length > 0) {
               console.warn("CSV parsing warnings:", results.errors);
             }
-  
+   
             // Debug what data we're working with
             console.log("Data before processing:", results.data.slice(0, 3));
             console.log("Available columns:", results.meta.fields);
+            console.log("Total rows from Papa.parse:", results.data.length);
+            
+            // If we got no data, try a different approach
+            if (results.data.length === 0 || !results.meta.fields) {
+              console.log("No data from Papa.parse, trying alternative parsing...");
+              
+              // Try parsing without header first to see if we can get any data
+              Papa.parse(csvContent, {
+                header: false,
+                skipEmptyLines: true,
+                delimiter: ",",
+                dynamicTyping: false,
+                complete: (fallbackResults: Papa.ParseResult<any[]>) => {
+                  console.log("Fallback parsing results:", fallbackResults.data.slice(0, 3));
+                  
+                  if (fallbackResults.data.length > 0) {
+                    // Use the first row as headers
+                    const headers = fallbackResults.data[0].map((h: any) => String(h).trim());
+                    console.log("Extracted headers:", headers);
+                    
+                    // Convert array data to objects
+                    const objectData = fallbackResults.data.slice(1).map((row: any[]) => {
+                      const obj: Record<string, any> = {};
+                      headers.forEach((header: string, i: number) => {
+                        obj[header] = row[i];
+                      });
+                      return obj;
+                    });
+                    
+                    console.log("Converted to object data:", objectData.slice(0, 2));
+                    
+                    // Process this data instead
+                    const processedData = processParseResults({
+                      data: objectData,
+                      errors: [],
+                      meta: {
+                        fields: headers,
+                        delimiter: ",",
+                        linebreak: "\n",
+                        aborted: false,
+                        truncated: false,
+                        cursor: 0
+                      }
+                    });
+                    
+                    if (processedData.length > 0) {
+                      continueWithImport(processedData, results);
+                    } else {
+                      showImportError();
+                    }
+                  } else {
+                    showImportError();
+                  }
+                }
+              });
+              return;
+            }
             
             // Use our improved parsing logic
             const processedData = processParseResults(results);
-  
+   
             setProgress(90);
-  
+   
             // Log how many rows were processed
             console.log(`Processed ${processedData.length} rows out of ${results.data.length} total rows`);
-  
+   
             if (processedData.length === 0) {
+              console.error("No data processed. Raw data sample:", results.data.slice(0, 5));
               toast({
                 title: "Import Error",
                 description: "No valid data could be extracted from the CSV file. The file appears to be empty or in an unrecognized format.",
@@ -825,70 +903,110 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
               return;
             }
             
-            // Store CSV file metadata in MongoDB
-            let fileInfo;
-            try {
-              console.log("Storing CSV file metadata in MongoDB...");
-              fileInfo = await storeCSVFileInfo({
-                fileName: file.name,
-                description: `Imported on ${new Date().toLocaleDateString()}`,
-                cloudinaryPublicId: cloudinaryResult?.public_id || null,
-                cloudinaryUrl: cloudinaryResult?.secure_url || null,
-                recordCount: processedData.length,
-                uploadDate: new Date(),
-                lastAccessDate: new Date()
-              });
-              console.log("CSV file metadata stored successfully with ID:", fileInfo.insertedId.toString());
-            } catch (error) {
-              console.error("Failed to store CSV file metadata:", error);
-              throw new Error(`MongoDB error storing file metadata: ${error instanceof Error ? error.message : String(error)}`);
-            }
+            continueWithImport(processedData, results);
             
-            // Store the processed data in MongoDB
-            try {
-              console.log(`Storing ${processedData.length} delivery records in MongoDB...`);
-              const deliveryDataResult = await storeDeliveryData(processedData, fileInfo.insertedId.toString());
-              if (!deliveryDataResult.success) {
-                throw new Error(deliveryDataResult.error || "Unknown error storing delivery data");
+            // Helper function to continue with import
+            async function continueWithImport(processedData: any[], originalResults: Papa.ParseResult<any>) {
+              // If import mode is "replace", delete all existing delivery data first
+              if (importMode === "replace") {
+                try {
+                  console.log("Import mode is 'replace'. Deleting all existing delivery data...");
+                  toast({
+                    title: "Replacing data",
+                    description: "Deleting existing data before importing new records...",
+                  });
+                  
+                  const deleteResult = await deleteAllDeliveryData();
+                  if (!deleteResult.success) {
+                    throw new Error(`Failed to delete existing data: ${deleteResult.error}`);
+                  }
+                  
+                  console.log(`Deleted ${deleteResult.deletedCount || 0} existing records`);
+                  toast({
+                    title: "Data cleared",
+                    description: `Removed ${deleteResult.deletedCount || 0} existing records`,
+                  });
+                } catch (error) {
+                  console.error("Failed to delete existing data:", error);
+                  throw new Error(`Failed to clear existing data: ${error instanceof Error ? error.message : String(error)}`);
+                }
               }
-              console.log("Delivery data stored successfully");
-            } catch (error) {
-              console.error("Failed to store delivery data:", error);
-              throw new Error(`MongoDB error storing delivery data: ${error instanceof Error ? error.message : String(error)}`);
-            }
-            
-            // Store file upload history
-            try {
-              console.log("Storing file upload history...");
-              const fileHistoryResult = await storeFileUploadHistory({
-                fileName: file.name,
-                fileSize: file.size,
-                cloudinaryPublicId: cloudinaryResult?.public_id || null,
-                cloudinaryUrl: cloudinaryResult?.secure_url || null,
-                recordCount: processedData.length,
-                description: `Imported on ${new Date().toLocaleDateString()}`
+              
+              // Store CSV file metadata in MongoDB
+              let fileInfo;
+              try {
+                console.log("Storing CSV file metadata in MongoDB...");
+                fileInfo = await storeCSVFileInfo({
+                  fileName: file!.name, // Add non-null assertion since we check at the start
+                  description: `Imported on ${new Date().toLocaleDateString()}`,
+                  cloudinaryPublicId: cloudinaryResult?.public_id || null,
+                  cloudinaryUrl: cloudinaryResult?.secure_url || null,
+                  recordCount: processedData.length,
+                  uploadDate: new Date(),
+                  lastAccessDate: new Date()
+                });
+                console.log("CSV file metadata stored successfully with ID:", fileInfo.insertedId.toString());
+              } catch (error) {
+                console.error("Failed to store CSV file metadata:", error);
+                throw new Error(`MongoDB error storing file metadata: ${error instanceof Error ? error.message : String(error)}`);
+              }
+              
+              // Store the processed data in MongoDB
+              try {
+                console.log(`Storing ${processedData.length} delivery records in MongoDB...`);
+                const deliveryDataResult = await storeDeliveryData(processedData, fileInfo.insertedId.toString());
+                if (!deliveryDataResult.success) {
+                  throw new Error(deliveryDataResult.error || "Unknown error storing delivery data");
+                }
+                console.log("Delivery data stored successfully");
+              } catch (error) {
+                console.error("Failed to store delivery data:", error);
+                throw new Error(`MongoDB error storing delivery data: ${error instanceof Error ? error.message : String(error)}`);
+              }
+              
+              // Store file upload history
+              try {
+                console.log("Storing file upload history...");
+                const fileHistoryResult = await storeFileUploadHistory({
+                  fileName: file!.name, // Add non-null assertion since we check at the start
+                  fileSize: file!.size, // Add non-null assertion since we check at the start
+                  cloudinaryPublicId: cloudinaryResult?.public_id || null,
+                  cloudinaryUrl: cloudinaryResult?.secure_url || null,
+                  recordCount: processedData.length,
+                  description: `Imported on ${new Date().toLocaleDateString()}`
+                });
+                
+                if (fileHistoryResult.success) {
+                  console.log("File upload history stored successfully");
+                } else {
+                  console.warn("Warning: File history storage had issues:", fileHistoryResult.error);
+                }
+              } catch (error) {
+                console.error("Failed to store file upload history:", error);
+                // Non-critical, don't throw
+              }
+              
+              setProgress(100);
+              
+              toast({
+                title: "Import successful",
+                description: `${importMode === "replace" ? "Replaced" : "Added"} ${processedData.length} records from ${originalResults.data.length} total rows. Data stored in MongoDB.`,
               });
               
-              if (fileHistoryResult.success) {
-                console.log("File upload history stored successfully");
-              } else {
-                console.warn("Warning: File history storage had issues:", fileHistoryResult.error);
-              }
-            } catch (error) {
-              console.error("Failed to store file upload history:", error);
-              // Non-critical, don't throw
+              onImportComplete(processedData, importMode);
+              onOpenChange(false);
+              resetDialog();
             }
             
-            setProgress(100);
-            
-            toast({
-              title: "Import successful",
-              description: `Processed ${processedData.length} records from ${results.data.length} total rows. Data stored in MongoDB.`,
-            });
-            
-            onImportComplete(processedData, importMode);
-            onOpenChange(false);
-            resetDialog();
+            // Helper function to show error
+            function showImportError() {
+              toast({
+                title: "Import Error",
+                description: "No valid data could be extracted from the CSV file. The file appears to be empty or in an unrecognized format.",
+                variant: "destructive",
+              });
+              setImporting(false);
+            }
           } catch (error) {
             console.error("Error in complete handler:", error);
             setImporting(false);
@@ -934,6 +1052,14 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
     } finally {
       setImporting(false);
       setProgress(0);
+    }
+  };
+
+  const handleBrowseClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (fileInputRef.current) {
+      fileInputRef.current.click();
     }
   };
 
@@ -1085,7 +1211,7 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
                   ? `${(file.size / 1024).toFixed(1)} KB`
                   : "Click to browse or drag and drop"}
               </span>
-              <Button type="button" variant="outline" size="sm" className="mt-3">
+              <Button type="button" variant="outline" size="sm" className="mt-3" onClick={handleBrowseClick}>
                 Browse Files
               </Button>
             </label>
@@ -1137,7 +1263,7 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
               <Button
                 variant="outline"
                 size="sm"
-                onClick={fetchCloudinaryFiles}
+                onClick={fetchStoredFiles}
                 disabled={cloudinaryLoading}
               >
                 <Database className="h-3.5 w-3.5 mr-1" />
@@ -1157,7 +1283,7 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
                 <div className="space-y-1">
                   {cloudinaryFiles.map((cloudFile) => (
                     <div
-                      key={cloudFile.public_id}
+                      key={cloudFile.mongoId}
                       className={`flex items-center justify-between p-2 rounded-md cursor-pointer hover:bg-gray-100 ${
                         selectedCloudinaryFile === cloudFile.public_id ? "bg-gray-100" : ""
                       }`}
@@ -1167,7 +1293,7 @@ export function DataImportDialog({ open, onOpenChange, onImportComplete, existin
                         <FileText className="h-4 w-4 text-gray-400" />
                         <div className="flex flex-col">
                           <span className="text-sm font-medium truncate max-w-[300px]">
-                            {cloudFile.public_id.split("/").pop()}
+                            {cloudFile.filename || cloudFile.public_id.split("/").pop()}
                           </span>
                           {cloudFile.description && (
                             <span className="text-xs text-muted-foreground truncate max-w-[300px]">

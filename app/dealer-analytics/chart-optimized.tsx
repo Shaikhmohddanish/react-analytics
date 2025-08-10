@@ -64,27 +64,47 @@ export default function DealerAnalyticsOptimized() {
              * 3. Memory Usage: Reduces memory consumption by deferring rendering
              * 4. Initial Load: Improves page load time by deferring expensive chart rendering
              */}
-            <LazyChartWrapper
-              id="dealer-sales-chart"
-              className="dealer-sales-chart" 
-              data={dealerAnalytics.dealerMetrics.slice(0, 15)}
-              title="Sales Performance"
-              height={400}
-              renderChart={({ data, height }) => (
-                <ResponsiveContainer width="100%" height={height}>
-                  <BarChart data={data}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" tick={{ fontSize: 10 }} angle={-45} textAnchor="end" height={80} />
-                    <YAxis tick={{ fontSize: 12 }} tickFormatter={(value) => `₹${(value / 100000).toFixed(0)}L`} />
-                    <Tooltip
-                      formatter={(value: number) => [formatCurrency(value), "Sales"]}
-                      labelStyle={{ fontSize: "12px" }}
-                    />
-                    <Bar dataKey="totalSales" fill="hsl(var(--chart-1))" />
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            />
+                         <LazyChartWrapper
+               id="dealer-sales-chart"
+               className="dealer-sales-chart" 
+               data={dealerAnalytics.dealerMetrics.slice(0, 15).map((dealer, index) => ({
+                 ...dealer,
+                 displayName: `Dealer ${index + 1}`,
+                 fullName: dealer.name
+               }))}
+               title="Sales Performance"
+               height={400}
+               renderChart={({ data, height }) => (
+                 <ResponsiveContainer width="100%" height={height}>
+                   <BarChart data={data} margin={{ bottom: 60 }}>
+                     <CartesianGrid strokeDasharray="3 3" />
+                     <XAxis 
+                       dataKey="displayName" 
+                       tick={{ fontSize: 12 }} 
+                       angle={0} 
+                       textAnchor="middle" 
+                       height={50}
+                       interval={0}
+                     />
+                     <YAxis tick={{ fontSize: 12 }} tickFormatter={(value) => `₹${(value / 100000).toFixed(0)}L`} />
+                     <Tooltip
+                       formatter={(value: number, name: string, props: any) => [
+                         formatCurrency(value), 
+                         "Sales"
+                       ]}
+                       labelFormatter={(label, payload) => {
+                         if (payload && payload[0] && payload[0].payload.fullName) {
+                           return payload[0].payload.fullName;
+                         }
+                         return label;
+                       }}
+                       labelStyle={{ fontSize: "12px" }}
+                     />
+                     <Bar dataKey="totalSales" fill="hsl(var(--chart-1))" />
+                   </BarChart>
+                 </ResponsiveContainer>
+               )}
+             />
           </CardContent>
         </Card>
 

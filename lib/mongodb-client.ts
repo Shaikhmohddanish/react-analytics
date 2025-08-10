@@ -139,3 +139,37 @@ export async function getDeliveryData(fileId?: string): Promise<DeliveryData[]> 
     return [];
   }
 }
+
+/**
+ * Delete all delivery data from MongoDB via API
+ */
+export async function deleteAllDeliveryData(): Promise<{ success: boolean, deletedCount?: number, error?: string }> {
+  try {
+    const response = await fetch('/api/mongodb/delete-all-delivery-data', {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+    
+    const result: MongoDBResponse & { deletedCount?: number } = await response.json();
+    
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error || 'Failed to delete all delivery data'
+      };
+    }
+    
+    return {
+      success: true,
+      deletedCount: result.deletedCount
+    };
+  } catch (error) {
+    console.error('Error deleting all delivery data:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error deleting all delivery data'
+    };
+  }
+}

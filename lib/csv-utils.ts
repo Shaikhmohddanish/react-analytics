@@ -32,25 +32,48 @@ export async function validateCSV(file: File): Promise<{
           csvContent = csvContent.slice(1);
         }
         
-        // Try to parse the content
+        // Try to parse the content with more lenient settings
         Papa.parse<Record<string, any>>(csvContent, {
           header: true,
           skipEmptyLines: true,
           delimitersToGuess: [',', '\t', ';', '|'],
-          preview: 10, // Just check first 10 rows
+          preview: 50, // Check more rows for better validation
+          transformHeader: (header: string) => header.trim(),
           complete: (results: ParseResult<Record<string, any>>) => {
+            console.log("CSV Validation Results:", {
+              totalRows: results.data.length,
+              fields: results.meta.fields,
+              errors: results.errors.length,
+              delimiter: results.meta.delimiter
+            });
+            
             if (results.data.length === 0) {
               resolve({
                 valid: false,
                 message: "No data rows found in file"
               });
             } else if (results.errors.length > 0) {
-              resolve({
-                valid: false,
-                message: `CSV parsing errors: ${results.errors.map(e => e.message).join(', ')}`,
-                data: results.data,
-                meta: results.meta
-              });
+              // Only consider it invalid if there are critical errors
+              const criticalErrors = results.errors.filter(e => 
+                e.type === 'Delimiter' || e.type === 'Quotes' || e.type === 'FieldMismatch'
+              );
+              
+              if (criticalErrors.length > 0) {
+                resolve({
+                  valid: false,
+                  message: `CSV parsing errors: ${criticalErrors.map(e => e.message).join(', ')}`,
+                  data: results.data,
+                  meta: results.meta
+                });
+              } else {
+                // Non-critical errors, still valid
+                resolve({
+                  valid: true,
+                  message: `Valid CSV with ${results.data.length} rows (${results.errors.length} minor warnings)`,
+                  data: results.data,
+                  meta: results.meta
+                });
+              }
             } else {
               resolve({
                 valid: true,
