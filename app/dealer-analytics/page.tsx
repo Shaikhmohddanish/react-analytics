@@ -577,20 +577,22 @@ export default function DealerAnalyticsPage() {
             paginatedData.data.map((dealer: any, index: number) => (
               <Card key={dealer.dealerName}>
                 <CardContent className="card-content-spacing">
-                  <div className="flex items-center justify-between mb-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 space-y-3 sm:space-y-0">
                     <div className="flex items-center space-x-3 min-w-0 flex-1">
-                      <div className="flex-shrink-0 w-10 h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-bold">
+                      <div className="flex-shrink-0 w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-xs sm:text-sm font-bold">
                         {index + 1}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center space-x-2 mb-1">
-                          <h3 className="text-lg font-semibold truncate" title={dealer.dealerName}>
+                        <div className="flex flex-col sm:flex-row sm:items-center space-y-1 sm:space-y-0 sm:space-x-2">
+                          <h3 className="text-base sm:text-lg font-semibold truncate" title={dealer.dealerName}>
                             {dealer.dealerName}
                           </h3>
-                          <Badge className={getTierColor(dealer.tier)}>{dealer.tier}</Badge>
-                          <Badge variant="outline" className="text-xs">
-                            {dealer.percentile}th percentile
-                          </Badge>
+                          <div className="flex flex-wrap items-center gap-1 sm:gap-2">
+                            <Badge className={`${getTierColor(dealer.tier)} text-xs`}>{dealer.tier}</Badge>
+                            <Badge variant="outline" className="text-xs">
+                              {dealer.percentile}th percentile
+                            </Badge>
+                          </div>
                         </div>
                         <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                           <span>{dealer.totalOrders} orders</span>
@@ -601,37 +603,37 @@ export default function DealerAnalyticsPage() {
                         </div>
                       </div>
                     </div>
-                    <div className="text-right flex-shrink-0">
-                      <div className="font-bold text-lg">{formatCurrency(dealer.totalSales)}</div>
-                      <div className="text-sm text-muted-foreground">
+                    <div className="text-left sm:text-right flex-shrink-0">
+                      <div className="font-bold text-base sm:text-lg">{formatCurrency(dealer.totalSales)}</div>
+                      <div className="text-xs sm:text-sm text-muted-foreground">
                         {dealer.growthRate >= 0 ? (
-                          <span className="text-green-600">? {dealer.growthRate.toFixed(1)}%</span>
+                          <span className="text-green-600">↗ {dealer.growthRate.toFixed(1)}%</span>
                         ) : (
-                          <span className="text-red-600">? {Math.abs(dealer.growthRate).toFixed(1)}%</span>
+                          <span className="text-red-600">↘ {Math.abs(dealer.growthRate).toFixed(1)}%</span>
                         )}
                       </div>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                    <div className="text-center p-3 rounded-lg bg-muted/50">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-4">
+                    <div className="text-center p-2 sm:p-3 rounded-lg bg-muted/50">
                       <p className="text-xs text-muted-foreground mb-1">Loyalty Score</p>
                       <div className="flex items-center justify-center">
-                        <span className="text-sm font-bold mr-1">{dealer.loyaltyScore}</span>
-                        <Progress value={dealer.loyaltyScore} className="h-2 w-16" />
+                        <span className="text-xs sm:text-sm font-bold mr-1">{dealer.loyaltyScore}</span>
+                        <Progress value={dealer.loyaltyScore} className="h-1.5 sm:h-2 w-12 sm:w-16" />
                       </div>
                     </div>
-                    <div className="text-center p-3 rounded-lg bg-muted/50">
+                    <div className="text-center p-2 sm:p-3 rounded-lg bg-muted/50">
                       <p className="text-xs text-muted-foreground mb-1">Market Share</p>
-                      <p className="text-sm font-bold">{dealer.marketShare.toFixed(2)}%</p>
+                      <p className="text-xs sm:text-sm font-bold">{dealer.marketShare.toFixed(2)}%</p>
                     </div>
-                    <div className="text-center p-3 rounded-lg bg-muted/50">
+                    <div className="text-center p-2 sm:p-3 rounded-lg bg-muted/50">
                       <p className="text-xs text-muted-foreground mb-1">Avg Order</p>
-                      <p className="text-sm font-bold break-word">{formatCurrency(dealer.avgOrderValue)}</p>
+                      <p className="text-xs sm:text-sm font-bold break-word">{formatCurrency(dealer.avgOrderValue)}</p>
                     </div>
-                    <div className="text-center p-3 rounded-lg bg-muted/50">
+                    <div className="text-center p-2 sm:p-3 rounded-lg bg-muted/50">
                       <p className="text-xs text-muted-foreground mb-1">Frequency</p>
-                      <p className="text-sm font-bold">{dealer.orderFrequency.toFixed(1)}/mo</p>
+                      <p className="text-xs sm:text-sm font-bold">{dealer.orderFrequency.toFixed(1)}/mo</p>
                     </div>
                   </div>
                 </CardContent>

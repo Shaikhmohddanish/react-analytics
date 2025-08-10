@@ -17,6 +17,7 @@ import {
 } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import { useSidebar } from "@/components/ui/sidebar"
 
 import {
   Sidebar,
@@ -115,6 +116,12 @@ const visualizationItems = [
 
 export function AppSidebar() {
   const pathname = usePathname()
+  const { setOpen } = useSidebar()
+
+  const handleNavigation = () => {
+    // Close sidebar on mobile when navigation link is clicked
+    setOpen(false)
+  }
 
   return (
     <Sidebar>
@@ -126,7 +133,7 @@ export function AppSidebar() {
               {mainItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild isActive={pathname === item.url}>
-                    <Link href={item.url}>
+                    <Link href={item.url} onClick={handleNavigation}>
                       <item.icon />
                       <span>{item.title}</span>
                     </Link>
@@ -144,7 +151,7 @@ export function AppSidebar() {
               {advancedItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild isActive={pathname === item.url}>
-                    <Link href={item.url}>
+                    <Link href={item.url} onClick={handleNavigation}>
                       <item.icon />
                       <span>{item.title}</span>
                     </Link>
@@ -162,7 +169,7 @@ export function AppSidebar() {
               {visualizationItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild isActive={pathname === item.url}>
-                    <Link href={item.url}>
+                    <Link href={item.url} onClick={handleNavigation}>
                       <item.icon />
                       <span>{item.title}</span>
                     </Link>
