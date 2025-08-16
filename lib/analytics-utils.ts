@@ -56,6 +56,8 @@ export interface DealerAnalytics {
   monthlyData: Record<string, { month: string; sales: number; orders: number }>
   monthlyTrend: Array<{ month: string; sales: number; orders: number }>
   recentActivityCount: number
+  percentile?: number
+  name?: string
 }
 
 /**

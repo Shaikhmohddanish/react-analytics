@@ -1,6 +1,7 @@
 // Client-side MongoDB interface that uses API routes
 // No direct MongoDB imports in this file to keep it client compatible
 import { DeliveryData, ProcessedData, CSVFileInfo as CSVFileInfoModel, FileUploadHistory } from '@/models';
+import { cachedFetch, CACHE_KEYS, CACHE_TTL } from '@/lib/cache-utils';
 
 /**
  * Interface for CSV file info (keeping for backward compatibility)
@@ -85,59 +86,62 @@ export async function storeDeliveryData(data: any[], fileId: string): Promise<{ 
 /**
  * Get CSV file entries from MongoDB via API
  */
-export async function getCSVFileEntries(): Promise<any[]> {
-  try {
-    const response = await fetch('/api/mongodb/get-csv-files');
-    const result: MongoDBResponse = await response.json();
-    
-    if (!result.success) {
-      throw new Error(result.error || 'Failed to fetch CSV file entries');
-    }
-    
-    return result.data || [];
-  } catch (error) {
+export async function getCSVFileEntries(options: { forceRefresh?: boolean } = {}): Promise<any[]> {
+  const { forceRefresh = false } = options;
+  return cachedFetch(
+    CACHE_KEYS.CSV_FILES,
+    async () => {
+      const response = await fetch('/api/mongodb/get-csv-files');
+      const result: MongoDBResponse = await response.json();
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to fetch CSV file entries');
+      }
+      return result.data || [];
+    },
+    { ttl: CACHE_TTL.MEDIUM, forceRefresh, useLocalStorage: true }
+  ).catch((error) => {
     console.error('Error fetching CSV file entries:', error);
     return [];
-  }
+  });
 }
 
 /**
  * Get delivery data from MongoDB via API
  */
-export async function getDeliveryData(fileId?: string): Promise<DeliveryData[]> {
-  try {
-    const url = fileId 
-      ? `/api/mongodb/get-delivery-data?fileId=${encodeURIComponent(fileId)}`
-      : '/api/mongodb/get-delivery-data';
-      
-    console.log("Fetching delivery data from:", url);
-    const response = await fetch(url);
-    const result: MongoDBResponse = await response.json();
-    
-    if (!result.success) {
-      console.error("Failed to fetch delivery data:", result.error);
-      throw new Error(result.error || 'Failed to fetch delivery data');
-    }
-    
-    // Log record count
-    const recordCount = Array.isArray(result.data) ? result.data.length : 0;
-    console.log(`Retrieved ${recordCount} delivery records from MongoDB`);
-    
-    // Ensure the data is properly typed
-    if (Array.isArray(result.data)) {
-      return result.data.filter(item => 
-        // Basic validation to ensure only valid data is returned
-        item && 
-        (item.deliveryChallanId || item["Delivery Challan ID"])
-      );
-    }
-    
-    console.warn("No valid data returned from MongoDB");
-    return [];
-  } catch (error) {
+export async function getDeliveryData(
+  fileId?: string,
+  options: { forceRefresh?: boolean } = {}
+): Promise<DeliveryData[]> {
+  const { forceRefresh = false } = options;
+  const cacheKey = `${CACHE_KEYS.DELIVERY_DATA}_${fileId || 'all'}`;
+  return cachedFetch(
+    cacheKey,
+    async () => {
+      const url = fileId
+        ? `/api/mongodb/get-delivery-data?fileId=${encodeURIComponent(fileId)}`
+        : '/api/mongodb/get-delivery-data';
+      console.log('Fetching delivery data from:', url);
+      const response = await fetch(url);
+      const result: MongoDBResponse = await response.json();
+      if (!result.success) {
+        console.error('Failed to fetch delivery data:', result.error);
+        throw new Error(result.error || 'Failed to fetch delivery data');
+      }
+      const recordCount = Array.isArray(result.data) ? result.data.length : 0;
+      console.log(`Retrieved ${recordCount} delivery records from MongoDB`);
+      if (Array.isArray(result.data)) {
+        return result.data.filter(
+          (item) => item && (item.deliveryChallanId || item['Delivery Challan ID'])
+        );
+      }
+      console.warn('No valid data returned from MongoDB');
+      return [];
+    },
+    { ttl: CACHE_TTL.LONG, forceRefresh, useLocalStorage: true }
+  ).catch((error) => {
     console.error('Error fetching delivery data:', error);
     return [];
-  }
+  });
 }
 
 /**

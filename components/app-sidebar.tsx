@@ -6,13 +6,7 @@ import {
   FileText,
   Calendar,
   LineChart,
-  PieChart,
   Users,
-  Package,
-  DollarSign,
-  Target,
-  Zap,
-  Brain,
   BarChart,
 } from "lucide-react"
 import Link from "next/link"
@@ -28,6 +22,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarRail,
 } from "@/components/ui/sidebar"
 
 const mainItems = [
@@ -56,11 +51,7 @@ const mainItems = [
     url: "/dealer-analytics",
     icon: TrendingUp,
   },
-  {
-    title: "Product Analytics",
-    url: "/product-analytics",
-    icon: Package,
-  },
+  // Keep only routes that exist in the app
 ]
 
 const advancedItems = [
@@ -68,21 +59,6 @@ const advancedItems = [
     title: "Advanced Reports",
     url: "/advanced-reports",
     icon: FileText,
-  },
-  {
-    title: "Predictive Analytics",
-    url: "/predictive-analytics",
-    icon: Brain,
-  },
-  {
-    title: "Performance Metrics",
-    url: "/performance-metrics",
-    icon: Target,
-  },
-  {
-    title: "Real-time Insights",
-    url: "/real-time-insights",
-    icon: Zap,
   },
 ]
 
@@ -102,25 +78,19 @@ const visualizationItems = [
     url: "/yearly-trend",
     icon: LineChart,
   },
-  {
-    title: "Market Analysis",
-    url: "/market-analysis",
-    icon: PieChart,
-  },
-  {
-    title: "Financial Overview",
-    url: "/financial-overview",
-    icon: DollarSign,
-  },
+  // Only include pages that exist
 ]
 
 export function AppSidebar() {
   const pathname = usePathname()
-  const { setOpen } = useSidebar()
+  const { setOpenMobile, isMobile } = useSidebar()
 
   const handleNavigation = () => {
-    // Close sidebar on mobile when navigation link is clicked
-    setOpen(false)
+    // Only close mobile menu when navigation link is clicked
+    // Don't affect desktop sidebar state
+    if (isMobile) {
+      setOpenMobile(false)
+    }
   }
 
   return (
@@ -180,6 +150,7 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+      <SidebarRail />
     </Sidebar>
   )
 }

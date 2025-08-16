@@ -7,6 +7,7 @@ import { Toaster } from "@/components/ui/toaster"
 import { SidebarProvider } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/app-sidebar"
 import { SidebarInset } from "@/components/ui/sidebar"
+import { SidebarTrigger } from "@/components/ui/sidebar"
 import { DataProvider } from "@/contexts/data-context"
 import { FilterProvider } from "@/contexts/filter-context"
 import { Header } from "@/components/header"
@@ -31,11 +32,12 @@ export default function RootLayout({
           <DataProvider>
             <FilterProvider>
               <SidebarProvider>
-                <div className="flex min-h-screen w-full">
+                <div className="flex min-h-screen w-full overflow-x-hidden">
                   <AppSidebar />
-                  <SidebarInset className="flex-1 flex flex-col min-w-0">
+                  <SidebarInset className="flex-1 flex flex-col min-w-0 overflow-x-hidden">
+                    <SidebarTrigger className="hidden md:inline-flex absolute left-2 top-2 z-20 md:peer-data-[state=collapsed]:inline-flex md:peer-data-[state=expanded]:hidden" />
                     <Header />
-                    <main className="flex-1 overflow-auto p-3 sm:p-4 lg:p-6 bg-background">{children}</main>
+                    <main className="flex-1 overflow-auto overflow-x-hidden p-3 sm:p-4 lg:p-6 bg-background">{children}</main>
                   </SidebarInset>
                 </div>
               </SidebarProvider>
