@@ -13,7 +13,24 @@ interface FilterState {
   }
   customers: string[]
   categories: string[]
+  challanTypes: string[]
+  statuses: string[]
+  invoiceStatuses: string[]
+  states: string[] // Place of Supply
+  gstTreatments: string[]
+  hasGSTIN: "any" | "with" | "without"
+  usageUnits: string[]
+  hsnCodes: string[]
+  itemTypes: string[]
   amountRange: {
+    min: number
+    max: number
+  }
+  quantityRange: {
+    min: number
+    max: number
+  }
+  priceRange: {
     min: number
     max: number
   }
@@ -39,7 +56,18 @@ const initialFilters: FilterState = {
   dateRange: { from: null, to: null },
   customers: [],
   categories: [],
+  challanTypes: [],
+  statuses: [],
+  invoiceStatuses: [],
+  states: [],
+  gstTreatments: [],
+  hasGSTIN: "any",
+  usageUnits: [],
+  hsnCodes: [],
+  itemTypes: [],
   amountRange: { min: 0, max: Number.POSITIVE_INFINITY },
+  quantityRange: { min: 0, max: Number.POSITIVE_INFINITY },
+  priceRange: { min: 0, max: Number.POSITIVE_INFINITY },
   searchTerm: "",
 }
 
@@ -91,9 +119,78 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
       if (!currentFilters.categories.includes(item.category)) return false
     }
 
+    // Challan type filter
+    if (currentFilters.challanTypes.length > 0) {
+      const challanType = String((item as any)["Challan Type"] || "")
+      if (!currentFilters.challanTypes.includes(challanType)) return false
+    }
+
+    // Status filter
+    if (currentFilters.statuses.length > 0) {
+      const status = String((item as any)["Status"] || "")
+      if (!currentFilters.statuses.includes(status)) return false
+    }
+
+    // Invoice Status filter
+    if (currentFilters.invoiceStatuses.length > 0) {
+      const invoiceStatus = String((item as any)["Invoice Status"] || "")
+      if (!currentFilters.invoiceStatuses.includes(invoiceStatus)) return false
+    }
+
+    // Place of Supply (state) filter
+    if (currentFilters.states.length > 0) {
+      const state = String((item as any)["Place of Supply"] || "")
+      if (!currentFilters.states.includes(state)) return false
+    }
+
+    // GST Treatment filter
+    if (currentFilters.gstTreatments.length > 0) {
+      const gstTreatment = String((item as any)["GST Treatment"] || "")
+      if (!currentFilters.gstTreatments.includes(gstTreatment)) return false
+    }
+
+    // Has GSTIN tri-state filter
+    if (currentFilters.hasGSTIN !== "any") {
+      const gstin = String((item as any)["GST Identification Number (GSTIN)"] || "").trim()
+      const has = gstin.length > 0
+      if (currentFilters.hasGSTIN === "with" && !has) return false
+      if (currentFilters.hasGSTIN === "without" && has) return false
+    }
+
+    // Usage Unit filter
+    if (currentFilters.usageUnits.length > 0) {
+      const unit = String((item as any)["Usage unit"] || "")
+      if (!currentFilters.usageUnits.includes(unit)) return false
+    }
+
+    // HSN/SAC filter
+    if (currentFilters.hsnCodes.length > 0) {
+      const hsn = String((item as any)["HSN/SAC"] || "")
+      if (!currentFilters.hsnCodes.includes(hsn)) return false
+    }
+
+    // Item Type filter
+    if (currentFilters.itemTypes.length > 0) {
+      const itemType = String((item as any)["Item Type"] || "")
+      if (!currentFilters.itemTypes.includes(itemType)) return false
+    }
+
     // Amount range filter
     if (currentFilters.amountRange.min > 0 || currentFilters.amountRange.max < Number.POSITIVE_INFINITY) {
       if (item.itemTotal < currentFilters.amountRange.min || item.itemTotal > currentFilters.amountRange.max) return false
+    }
+
+    // Quantity range (use QuantityOrdered if present; fallback to QuantityInvoiced)
+    if (currentFilters.quantityRange.min > 0 || currentFilters.quantityRange.max < Number.POSITIVE_INFINITY) {
+      const qty = Number((item as any)["QuantityOrdered"]) || Number((item as any)["QuantityInvoiced"]) || 0
+      if (qty < currentFilters.quantityRange.min || qty > currentFilters.quantityRange.max) return false
+    }
+
+    // Item price range
+    if (currentFilters.priceRange.min > 0 || currentFilters.priceRange.max < Number.POSITIVE_INFINITY) {
+      const priceRaw = String((item as any)["Item Price"] || "0").replace(/[₹$,]/g, "")
+      const price = Number(priceRaw) || 0
+      if (price < currentFilters.priceRange.min || price > currentFilters.priceRange.max) return false
     }
 
     // Enhanced search filter with multiple field matching
@@ -181,8 +278,21 @@ export function FilterProvider({ children }: { children: React.ReactNode }) {
       filters.dateRange.to !== null ||
       filters.customers.length > 0 ||
       filters.categories.length > 0 ||
+      filters.challanTypes.length > 0 ||
+      filters.statuses.length > 0 ||
+      filters.invoiceStatuses.length > 0 ||
+      filters.states.length > 0 ||
+      filters.gstTreatments.length > 0 ||
+      filters.hasGSTIN !== "any" ||
+      filters.usageUnits.length > 0 ||
+      filters.hsnCodes.length > 0 ||
+      filters.itemTypes.length > 0 ||
       filters.amountRange.min > 0 ||
       filters.amountRange.max < Number.POSITIVE_INFINITY ||
+      filters.quantityRange.min > 0 ||
+      filters.quantityRange.max < Number.POSITIVE_INFINITY ||
+      filters.priceRange.min > 0 ||
+      filters.priceRange.max < Number.POSITIVE_INFINITY ||
       searchTerm.length > 0
     )
   }, [filters, searchTerm])

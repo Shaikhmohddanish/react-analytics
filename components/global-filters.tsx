@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Calendar } from "@/components/ui/calendar"
 import { Checkbox } from "@/components/ui/checkbox"
+import { MultiSelect } from "@/components/ui/multi-select"
 import { Label } from "@/components/ui/label"
 import { Slider } from "@/components/ui/slider"
 import {
@@ -35,6 +36,16 @@ export function GlobalFilters({ open, onOpenChange }: GlobalFiltersProps) {
   const customers = [...new Set(data.map((item) => item["Customer Name"]))].sort()
   const categories = [...new Set(data.map((item) => item.category))].sort()
   const maxAmount = Math.max(...data.map((item) => item.itemTotal), 1000000)
+  const challanTypes = [...new Set(data.map((d) => String((d as any)["Challan Type"] || "")))].filter(Boolean).sort()
+  const statuses = [...new Set(data.map((d) => String((d as any)["Status"] || "")))].filter(Boolean).sort()
+  const invoiceStatuses = [...new Set(data.map((d) => String((d as any)["Invoice Status"] || "")))].filter(Boolean).sort()
+  const states = [...new Set(data.map((d) => String((d as any)["Place of Supply"] || "")))].filter(Boolean).sort()
+  const gstTreatments = [...new Set(data.map((d) => String((d as any)["GST Treatment"] || "")))].filter(Boolean).sort()
+  const usageUnits = [...new Set(data.map((d) => String((d as any)["Usage unit"] || "")))].filter(Boolean).sort()
+  const hsnCodes = [...new Set(data.map((d) => String((d as any)["HSN/SAC"] || "")))].filter(Boolean).sort()
+  const itemTypes = [...new Set(data.map((d) => String((d as any)["Item Type"] || "")))].filter(Boolean).sort()
+  const maxQuantity = Math.max(...data.map((d) => Number((d as any)["QuantityOrdered"]) || Number((d as any)["QuantityInvoiced"]) || 0), 100)
+  const maxPrice = Math.max(...data.map((d) => Number(String((d as any)["Item Price"] || "0").replace(/[₹$,]/g, "")) || 0), 5000)
 
   const handleApply = () => {
     setFilters(tempFilters)
@@ -46,7 +57,18 @@ export function GlobalFilters({ open, onOpenChange }: GlobalFiltersProps) {
       dateRange: { from: null, to: null },
       customers: [],
       categories: [],
+      challanTypes: [],
+      statuses: [],
+      invoiceStatuses: [],
+      states: [],
+      gstTreatments: [],
+      hasGSTIN: "any",
+      usageUnits: [],
+      hsnCodes: [],
+      itemTypes: [],
       amountRange: { min: 0, max: Number.POSITIVE_INFINITY },
+      quantityRange: { min: 0, max: Number.POSITIVE_INFINITY },
+      priceRange: { min: 0, max: Number.POSITIVE_INFINITY },
       searchTerm: "",
     })
   }
@@ -154,70 +176,156 @@ export function GlobalFilters({ open, onOpenChange }: GlobalFiltersProps) {
             </div>
           </div>
 
-          {/* Categories */}
+          {/* Categories (dropdown multiselect with typeahead) */}
+          <MultiSelect
+            label="Categories"
+            options={categories}
+            selected={tempFilters.categories}
+            onChange={(vals) => setTempFilters((prev) => ({ ...prev, categories: vals }))}
+            className="space-y-2"
+          />
+
+          {/* Quantity Range */}
           <div className="space-y-2">
-            <Label className="text-sm font-medium">Categories</Label>
-            <div className="max-h-32 sm:max-h-48 overflow-y-auto space-y-2 border rounded-md p-3">
-              {categories.map((category, index) => (
-                <div key={`${category}-${index}`} className="flex items-center space-x-2">
-                  <Checkbox
-                    id={`category-${category}`}
-                    checked={tempFilters.categories.includes(category)}
-                    onCheckedChange={(checked) => {
-                      if (checked) {
-                        setTempFilters((prev) => ({
-                          ...prev,
-                          categories: [...prev.categories, category],
-                        }))
-                      } else {
-                        setTempFilters((prev) => ({
-                          ...prev,
-                          categories: prev.categories.filter((c) => c !== category),
-                        }))
-                      }
-                    }}
-                  />
-                  <Label htmlFor={`category-${category}`} className="text-xs sm:text-sm">
-                    {category}
-                  </Label>
-                </div>
+            <Label className="text-sm font-medium">Quantity Range</Label>
+            <div className="px-2">
+              <Slider
+                value={[tempFilters.quantityRange?.min || 0, (tempFilters.quantityRange?.max || Number.POSITIVE_INFINITY) === Number.POSITIVE_INFINITY ? maxQuantity : tempFilters.quantityRange.max]}
+                onValueChange={([min, max]) =>
+                  setTempFilters((prev) => ({
+                    ...prev,
+                    quantityRange: { min, max: max === maxQuantity ? Number.POSITIVE_INFINITY : max },
+                  }))
+                }
+                max={maxQuantity}
+                step={1}
+                className="w-full"
+              />
+              <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                <span>{tempFilters.quantityRange?.min || 0}</span>
+                <span>{((tempFilters.quantityRange?.max || Number.POSITIVE_INFINITY) === Number.POSITIVE_INFINITY ? maxQuantity : tempFilters.quantityRange?.max) as number}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Item Price Range */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Item Price (₹)</Label>
+            <div className="px-2">
+              <Slider
+                value={[tempFilters.priceRange?.min || 0, (tempFilters.priceRange?.max || Number.POSITIVE_INFINITY) === Number.POSITIVE_INFINITY ? maxPrice : tempFilters.priceRange.max]}
+                onValueChange={([min, max]) =>
+                  setTempFilters((prev) => ({
+                    ...prev,
+                    priceRange: { min, max: max === maxPrice ? Number.POSITIVE_INFINITY : max },
+                  }))
+                }
+                max={maxPrice}
+                step={50}
+                className="w-full"
+              />
+              <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                <span>₹{(tempFilters.priceRange?.min || 0).toLocaleString()}</span>
+                <span>₹{(((tempFilters.priceRange?.max || Number.POSITIVE_INFINITY) === Number.POSITIVE_INFINITY ? maxPrice : tempFilters.priceRange?.max) as number).toLocaleString()}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Customers (dropdown multiselect with typeahead) */}
+          <MultiSelect
+            label="Customers"
+            options={customers}
+            selected={tempFilters.customers}
+            onChange={(vals) => setTempFilters((prev) => ({ ...prev, customers: vals }))}
+            className="space-y-2"
+          />
+          
+          <MultiSelect
+            label="Challan Type"
+            options={challanTypes}
+            selected={tempFilters.challanTypes || []}
+            onChange={(vals) => setTempFilters((prev) => ({ ...prev, challanTypes: vals }))}
+            className="space-y-2"
+          />
+
+          <MultiSelect
+            label="Status"
+            options={statuses}
+            selected={tempFilters.statuses || []}
+            onChange={(vals) => setTempFilters((prev) => ({ ...prev, statuses: vals }))}
+            className="space-y-2"
+          />
+
+          <MultiSelect
+            label="Invoice Status"
+            options={invoiceStatuses}
+            selected={tempFilters.invoiceStatuses || []}
+            onChange={(vals) => setTempFilters((prev) => ({ ...prev, invoiceStatuses: vals }))}
+            className="space-y-2"
+          />
+
+          <MultiSelect
+            label="Place of Supply"
+            options={states}
+            selected={tempFilters.states || []}
+            onChange={(vals) => setTempFilters((prev) => ({ ...prev, states: vals }))}
+            className="space-y-2"
+          />
+
+          <MultiSelect
+            label="GST Treatment"
+            options={gstTreatments}
+            selected={tempFilters.gstTreatments || []}
+            onChange={(vals) => setTempFilters((prev) => ({ ...prev, gstTreatments: vals }))}
+            className="space-y-2"
+          />
+
+          {/* GSTIN presence */}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">GSTIN</Label>
+            <div className="flex gap-3 items-center">
+              {[
+                { key: "any", label: "Any" },
+                { key: "with", label: "With GSTIN" },
+                { key: "without", label: "Without GSTIN" },
+              ].map((opt) => (
+                <button
+                  key={opt.key}
+                  className={cn(
+                    "text-xs px-2 py-1 rounded border",
+                    tempFilters.hasGSTIN === (opt.key as any) ? "bg-primary text-primary-foreground" : "bg-background"
+                  )}
+                  onClick={() => setTempFilters((prev) => ({ ...prev, hasGSTIN: opt.key as any }))}
+                >
+                  {opt.label}
+                </button>
               ))}
             </div>
           </div>
 
-          {/* Customers */}
-          <div className="space-y-2">
-            <Label className="text-sm font-medium">Customers</Label>
-            <div className="max-h-32 sm:max-h-48 overflow-y-auto space-y-2 border rounded-md p-3">
-              {customers.slice(0, 20).map((customer, index) => (
-                <div key={`${customer}-${index}`} className="flex items-center space-x-2">
-                  <Checkbox
-                    id={`customer-${customer}`}
-                    checked={tempFilters.customers.includes(customer)}
-                    onCheckedChange={(checked) => {
-                      if (checked) {
-                        setTempFilters((prev) => ({
-                          ...prev,
-                          customers: [...prev.customers, customer],
-                        }))
-                      } else {
-                        setTempFilters((prev) => ({
-                          ...prev,
-                          customers: prev.customers.filter((c) => c !== customer),
-                        }))
-                      }
-                    }}
-                  />
-                  <Label htmlFor={`customer-${customer}`} className="text-xs sm:text-sm truncate">
-                    {customer}
-                  </Label>
-                </div>
-              ))}
-              {customers.length > 20 && (
-                <p className="text-xs text-muted-foreground">And {customers.length - 20} more...</p>
-              )}
-            </div>
-          </div>
+          <MultiSelect
+            label="Usage Unit"
+            options={usageUnits}
+            selected={tempFilters.usageUnits || []}
+            onChange={(vals) => setTempFilters((prev) => ({ ...prev, usageUnits: vals }))}
+            className="space-y-2"
+          />
+
+          <MultiSelect
+            label="HSN/SAC"
+            options={hsnCodes}
+            selected={tempFilters.hsnCodes || []}
+            onChange={(vals) => setTempFilters((prev) => ({ ...prev, hsnCodes: vals }))}
+            className="space-y-2"
+          />
+
+          <MultiSelect
+            label="Item Type"
+            options={itemTypes}
+            selected={tempFilters.itemTypes || []}
+            onChange={(vals) => setTempFilters((prev) => ({ ...prev, itemTypes: vals }))}
+            className="space-y-2"
+          />
         </div>
 
         {/* Active Filters */}
@@ -264,6 +372,54 @@ export function GlobalFilters({ open, onOpenChange }: GlobalFiltersProps) {
                     }))
                   }
                 />
+              </Badge>
+            ))}
+            {tempFilters.challanTypes?.map((v) => (
+              <Badge key={`ct-b-${v}`} variant="secondary" className="text-xs">
+                {v}
+                <X className="ml-1 h-3 w-3 cursor-pointer" onClick={() => setTempFilters((p) => ({ ...p, challanTypes: (p.challanTypes || []).filter((x) => x !== v) }))} />
+              </Badge>
+            ))}
+            {tempFilters.statuses?.map((v) => (
+              <Badge key={`st-b-${v}`} variant="secondary" className="text-xs">
+                {v}
+                <X className="ml-1 h-3 w-3 cursor-pointer" onClick={() => setTempFilters((p) => ({ ...p, statuses: (p.statuses || []).filter((x) => x !== v) }))} />
+              </Badge>
+            ))}
+            {tempFilters.invoiceStatuses?.map((v) => (
+              <Badge key={`is-b-${v}`} variant="secondary" className="text-xs">
+                {v}
+                <X className="ml-1 h-3 w-3 cursor-pointer" onClick={() => setTempFilters((p) => ({ ...p, invoiceStatuses: (p.invoiceStatuses || []).filter((x) => x !== v) }))} />
+              </Badge>
+            ))}
+            {tempFilters.states?.map((v) => (
+              <Badge key={`ps-b-${v}`} variant="secondary" className="text-xs">
+                {v}
+                <X className="ml-1 h-3 w-3 cursor-pointer" onClick={() => setTempFilters((p) => ({ ...p, states: (p.states || []).filter((x) => x !== v) }))} />
+              </Badge>
+            ))}
+            {tempFilters.gstTreatments?.map((v) => (
+              <Badge key={`gstt-b-${v}`} variant="secondary" className="text-xs">
+                {v}
+                <X className="ml-1 h-3 w-3 cursor-pointer" onClick={() => setTempFilters((p) => ({ ...p, gstTreatments: (p.gstTreatments || []).filter((x) => x !== v) }))} />
+              </Badge>
+            ))}
+            {tempFilters.usageUnits?.map((v) => (
+              <Badge key={`uu-b-${v}`} variant="secondary" className="text-xs">
+                {v}
+                <X className="ml-1 h-3 w-3 cursor-pointer" onClick={() => setTempFilters((p) => ({ ...p, usageUnits: (p.usageUnits || []).filter((x) => x !== v) }))} />
+              </Badge>
+            ))}
+            {tempFilters.hsnCodes?.map((v) => (
+              <Badge key={`hsn-b-${v}`} variant="secondary" className="text-xs">
+                {v}
+                <X className="ml-1 h-3 w-3 cursor-pointer" onClick={() => setTempFilters((p) => ({ ...p, hsnCodes: (p.hsnCodes || []).filter((x) => x !== v) }))} />
+              </Badge>
+            ))}
+            {tempFilters.itemTypes?.map((v) => (
+              <Badge key={`it-b-${v}`} variant="secondary" className="text-xs">
+                {v}
+                <X className="ml-1 h-3 w-3 cursor-pointer" onClick={() => setTempFilters((p) => ({ ...p, itemTypes: (p.itemTypes || []).filter((x) => x !== v) }))} />
               </Badge>
             ))}
             {tempFilters.customers.map((customer, index) => (
